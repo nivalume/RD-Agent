@@ -30,6 +30,7 @@ azure-ai-formrecognizer
 
 # factor implementations
 tables
+phasor-trader  # PyPI distribution of phasor; the import name stays `phasor`
 
 # CI Fix Tool
 tree-sitter-python

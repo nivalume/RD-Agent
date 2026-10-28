@@ -1,0 +1,461 @@
+# Prompts for the phasor factor coder.
+#
+# The coder assembles its system prompt from the reference sections below: each
+# section is rendered on its own and passed into the implementation prompt under
+# the variable named after it.
+#
+#   evolving_strategy_factor_implementation_v1_system
+#       scenario, data_contract, expression_reference, python_reference,
+#       output_format
+#   evolving_strategy_factor_implementation_v2_user
+#       factor_information_str, queried_similar_successful_knowledge,
+#       queried_similar_error_knowledge,
+#       error_summary_critics, latest_attempt_to_latest_successful_execution
+#   evolving_strategy_error_summary_v2_system
+#       scenario, factor_information_str, latest_implementation, latest_feedback
+#   evolving_strategy_error_summary_v2_user
+#       similar_errors: a list of (error text, (failed knowledge, fixed knowledge))
+#
+# `phasor_expression_reference` is rendered with `fields`: a preformatted,
+# comma-separated list of the field names the data layer exposes, such as
+# "`$open`, `$high`, `$low`, `$close`, `$volume`, `$funding_rate`".
+
+phasor_data_contract: |-
+  ## The panel
+
+  A factor is one number per bar and per instrument. It is a (T, S) float64
+  array: T bar times (ascending, UTC) by S instruments in a fixed order. The
+  evaluator aligns it to the panel row by row and ranks it across the
+  instruments at every bar. A factor never sees a file path, a dataframe or a
+  database.
+
+  The runtime hands the factor an already loaded and aligned panel:
+  - row t is the close of a bar; a value at row t may read rows <= t of the
+    same column, and any column of row t (a cross-sectional read is the same
+    bar, so it is still causal);
+  - NaN means missing: a bar the instrument did not trade, or an auxiliary
+    field that has no observation yet. Leave NaN as NaN;
+  - leading NaNs are the warmup. They are expected and must not be filled by
+    hand;
+  - auxiliary fields (funding, open interest, liquidations) are already
+    aggregated by the data layer onto the bar grid. Their names are listed with
+    the scenario; do not rebuild them from other columns.
+
+  The factor is evaluated on an in-sample window and a validation window. A
+  value that moves when future rows are removed is a look-ahead bug, even when
+  it looks profitable: the evaluator recomputes the factor on a truncated panel
+  and rejects it.
+
+phasor_expression_reference: |-
+  ## The expression language
+
+  Phasor compiles one expression into a dependency graph, checks it, and
+  evaluates it over the whole panel in one pass. The language is the qlib
+  dialect. An expression is a single value expression; there are no statements.
+
+  ### Fields
+
+  - `$name` reads a field column, e.g. `$close`, `$volume`, `$funding_rate`.
+    Names are case-insensitive (they are lower-cased) and may contain letters,
+    digits, `_` and the full-width punctuation `、：（）`.
+  - Available fields for this scenario: {{ fields }}.
+  - A field that is not available is a compile error, not a column of NaN.
+  - `$$name` is point-in-time data and is only legal inside `P(...)` or
+    `PRef(...)`.
+
+  ### Literals
+
+  - Numbers: `20`, `0.5`, `1e-12`. `True` is 1 and `False` is 0.
+  - A quoted string is only a parameter of an operator that takes one:
+    `'14:44'` in `DayCumsum`, `"SH000300"` in `ChangeInstrument` or `Mask`.
+    `None` is only `Cut`'s right parameter.
+  - A parameter that must be constant may be arithmetic over literals:
+    `Mean($close, 2*5)`, `Ref($close, 0)`. It is folded at compile time.
+  - There are no variables, assignments, statements, comments or `;`.
+
+  ### Operators, strongest first
+
+  Phasor uses mathematical precedence, not Python's.
+
+  | Precedence | Operators | Meaning |
+  |----|----|----|
+  | 1 | `^` (also `**`) | power, right-associative: `2^3^2 = 2^9` |
+  | 2 | unary `-` `+` | weaker than power: `-2^2 = -4`, `2^-1 = 0.5` |
+  | 3 | `*` `/` | left-associative |
+  | 4 | `+` `-` | left-associative |
+  | 5 | `<` `<=` `>` `>=` `==` `!=` | chainable: `1 < $x < 3` means both comparisons |
+  | 6 | `&` | conjunction, tighter than disjunction |
+  | 7 | `|` | disjunction |
+
+  `1 < $x < 3` evaluates the middle expression once; `(1 < $x) < 3` compares
+  a comparison result instead. `a > 1 & b < 2` groups as `(a > 1) & (b < 2)`,
+  unlike Python and qlib. A lone `=` or `!` is a syntax error.
+
+  ### Element-wise operators
+
+  - `Abs Sign Log Exp Sqrt Not`: one input, one output.
+  - `IsNan IsNull IsInf`: 1.0 or 0.0; `IsNull` is `IsNan`.
+  - `FFillNan(x)`: carry the last valid value forward.
+    `BFillNan(x)`: fill backward (reads the future; rejected in a factor).
+  - Function forms of the infix operators exist (`Add`, `Sub`, `Mul`, `Div`,
+    `Power`, `Gt`, `Ge`, `Lt`, `Le`, `Eq`, `Ne`, `And`, `Or`). Prefer the
+    infix form. `Greater` and `Less` match `>` and `<`, and NaN in gives NaN
+    out.
+  - `FillNa(x, v)`: v where x is NaN.
+  - `Mask(x, c)`: x where c is truthy (non-zero and not NaN), else NaN.
+  - `Select(c, x)`: qlib's `Select`; same result as `Mask(x, c)`.
+  - `SignedPower(x, p)`: sign(x) * |x|^p; 0 when x is 0.
+  - `Clip(x, lo, hi)`: clamp to [lo, hi]; NaN stays NaN.
+  - `If(c, a, b)`: a where c is truthy, else b.
+
+  ### Shift
+
+  - `Ref(x, n)`: the value n rows back. n > 0 is a view, n = 0 is qlib's
+    first-row value (not the current row), n < 0 reads the future and is
+    rejected.
+  - `Delta(x, n)`: x - Ref(x, n); n must be >= 0.
+
+  ### Smoothing
+
+  - `EMA(x, p)`: p < 1 is alpha, p >= 1 is span (alpha = 2/(p+1)), p = 0 is an
+    expanding window.
+
+  ### Rolling windows (x, N)
+
+  All of them use min_periods = 1 (the first row already has a value, as in
+  qlib), treat N = 0 as an expanding window, and let NaN occupy a slot without
+  entering the statistic:
+
+  - `Mean Sum Std Var Max Min Med Mad Count` (Std and Var are sample statistics,
+    ddof = 1; Mad is the mean absolute deviation; Count counts the valid values).
+  - `Skew`: N = 0 or N >= 3. `Kurt`: N = 0 or N >= 4.
+  - `Rank`: percentile of the last value within the window.
+  - `IdxMax IdxMin`: 1-based position of the extreme in the window.
+  - `Slope Rsquare Resi`: rolling linear regression of x on time (1..N):
+    the slope, the R-squared and the residual of the last point.
+  - `WMA`: qlib's weighted moving average.
+  - `DecayLinear`: WorldQuant decay; weights 1..N, newest heaviest,
+    normalized over the valid values.
+  - `Prod`: product of the valid values; all NaN gives NaN.
+  - `Quantile(x, N, q)`: q in [0, 1], linear interpolation.
+  - `Corr(x, y, N)`, `Cov(x, y, N)`: only rows where both sides are valid.
+    `Corr` is NaN when either side's standard deviation is <= 2e-5 (qlib's
+    rule).
+
+  A fractional N between 0 and 1 is qlib's alpha path for
+  `Mean Sum Std Var Max Min Med Count`: it becomes `EMA(x, N)`, even for
+  `Std`. Use an integer N unless you want that.
+
+  ### Cross-sectional operators
+
+  These read one row across every instrument at once. NaN is skipped and stays
+  NaN in the output.
+
+  - `CSRank(x)`: percentile rank within the row, ties averaged
+    (pandas `rank(pct=True)`).
+  - `CSZScore(x)`: z-score within the row, sample standard deviation.
+  - `CSDemean(x)`: subtract the row mean.
+  - `Scale(x[, a])`: scale the row so the absolute values sum to a
+    (default 1).
+  - `IndNeutralize(x, g)`: subtract the mean of x over the instruments
+    whose g is the same exact value in that row.
+  - `CSResi(y, x)`: cross-sectional least-squares residual of y on x.
+
+  ### Intraday and calendar
+
+  These need the bar times, which the runtime passes.
+
+  - `DayCumsum(x[, start, end, g])`: cumulative sum over the day's bars, from
+    the bar containing start to the last bar starting at or before end; g is
+    the bar length in minutes; outside the window it is 0; missing rows stay
+    NaN.
+  - `DayLast(x)`: the last valid value of the day (reads the future;
+    rejected in a factor).
+  - `Date(x)`: days since 1970-01-01.
+  - `Cut(x[, l, r])`: the first l and last |r| rows are set to NaN; a negative
+    r reads the future.
+
+  ### Across instruments
+
+  - `ChangeInstrument("X", e)`: evaluate e on instrument X and give every
+    column that series.
+  - `Mask(e, "X")`: with a string second parameter, qlib's cross-instrument
+    mask; with a non-string second parameter it is the condition mask above.
+
+  ### Point-in-time
+
+  - `P(e)`, `PRef(e, period)`: evaluate e over the records known at each
+    row and take the latest one; e reads `$$field`.
+
+  ### Limits and pitfalls
+
+  - A window, p or q must be a literal. `Mean($close, $n)` does not compile;
+    `Mean($close, 2*5)` does.
+  - `Rank` is rolling. Cross-sectional ranking is `CSRank`.
+  - `Ref($close, 0)` is the first row's close. For the current row write
+    `$close`.
+  - N = 0 is an expanding window, not an empty one.
+  - Comparisons with NaN give 0; `Greater` and `Less` give NaN.
+  - `BFillNan`, `DayLast`, a negative `Ref` and a negative `Cut` right
+    parameter read the future. The coder rejects any factor whose set
+    `uses_future` is true.
+  - Source length is at most 16384 bytes; nesting is at most 128 levels.
+
+  ### Examples
+
+  - `Ref($close, 1) / $close - 1`: one-bar return.
+  - `CSRank(Mean($close, 20) / $close - 1)`: cross-sectional rank of a 20-bar
+    momentum.
+  - `Corr($close, $volume, 20)`: price-volume correlation.
+  - `Mean($funding_rate, 3)`: three-bar average funding.
+  - `If($close > Mean($close, 20), 1, -1)`: a trend sign.
+  - `(Mean($close, {n}) / $close - 1) * CSRank($volume)`: one parameter used
+    twice, plus a cross-sectional weight.
+
+phasor_python_reference: |-
+  ## Python fallback
+
+  Use Python only when the expression language cannot express the formula:
+
+  - the value is path-dependent, i.e. it depends on its own earlier values
+    through a loop: streaks, state machines, recursive updates, stops that
+    depend on earlier values;
+  - it needs a numerical routine with no operator, such as a per-window
+    eigen-decomposition, a Kalman filter or a Hurst exponent;
+  - it needs event-level aggregation that the field list does not provide;
+  - the expression would need more than about ten nested `If` branches.
+
+  Do not use Python for anything the operators already do: a rolling mean, a
+  shift, a cross-sectional rank, a regression residual. Those have exact,
+  compile-checked, faster equivalents, and the evaluator prefers the
+  expression.
+
+  ### Contract
+
+  ```python
+  import numpy as np
+
+  def calculate(fields, index, symbols):
+      close = fields["close"]          # (T, S) float64, read-only
+      ...
+      return values                    # (T, S) float64
+  ```
+
+  - `fields`: a dict of name -> (T, S) float64 array. Arrays are
+    Fortran-contiguous and write-protected; do not modify them.
+  - `index`: (T,) int64 UTC nanoseconds, ascending.
+  - `symbols`: tuple of names, length S.
+  - Return exactly one (T, S) float64 array. NaN is allowed and expected in
+    the warmup.
+
+  ### Rules the evaluator enforces
+
+  - Row t may read rows <= t only, for every column. No `np.roll` without a
+    shift, no centering, no `np.flip`, no zero-phase filtering.
+  - Pure and deterministic: no file, network, database, environment or
+    subprocess access; no unseeded randomness; no `input()`; no printing
+    beyond a line of diagnostics.
+  - Imports: numpy and the standard library. No pandas, pyarrow, duckdb or
+    phasor imports.
+  - Do not mutate `fields` or its arrays.
+  - Vectorize over rows where you can; a loop over symbols is fine. The budget
+    is 30 seconds and O(T*S) memory for the whole panel.
+  - `calculate` must be the only top-level function, and nothing may run at
+    import time.
+
+  ### Examples
+
+  A value the language cannot express, a streak that depends on its own past:
+
+  ```python
+  import numpy as np
+
+  def calculate(fields, index, symbols):
+      close = fields["close"]
+      previous = np.vstack([np.full((1, close.shape[1]), np.nan), close[:-1]])
+      up = np.isfinite(previous) & (close > previous)
+      streak = np.zeros(close.shape, dtype=np.float64)
+      for t in range(1, close.shape[0]):
+          streak[t] = np.where(up[t], streak[t - 1] + 1.0, 0.0)
+      streak[~np.isfinite(close)] = np.nan
+      return streak
+  ```
+
+  If the code raises or exceeds the budget, the evaluator returns the traceback
+  or the timing; fix the code rather than changing the formula.
+
+phasor_output_format: |-
+  ## Output format
+
+  Respond with one JSON object and nothing else. `mode` is exactly
+  `"expression"` or `"python"`; never both, never any other key besides the ones
+  shown.
+
+  Expression mode:
+
+  ```json
+  {
+      "mode": "expression",
+      "expression": "CSRank(Mean($close, {n}) / $close - 1)",
+      "params": {"n": [5, 20, 60]},
+      "fields": ["close"],
+      "reason": "A cross-sectional rank of 20-bar momentum; {n} makes the window a parameter."
+  }
+  ```
+
+  - `expression`: one expression in the language above. No assignment,
+    no comments, no python.
+  - `params`: optional. Every `{name}` in the expression must have a
+    case here. Values are numbers (a window must be a non-negative integer);
+    at most 2 parameters and at most 6 cases in total. A placeholder is a
+    single pair of braces, never doubled.
+  - `fields`: the field names used, without the `$`.
+  - `reason`: at most two sentences, naming the operator that implements
+    each part of the formula.
+
+  Python mode:
+
+  ```json
+  {
+      "mode": "python",
+      "code": "import numpy as np\n\ndef calculate(fields, index, symbols):\n    ...\n    return values\n",
+      "fields": ["close"],
+      "reason": "The value depends on its own past values through a loop, which no operator expresses."
+  }
+  ```
+
+  - `code`: the whole module as one string, newlines escaped as `\n`.
+    It must define `calculate` and must not run anything at import time.
+  - `fields`: the field names used, without the `$`.
+  - `reason`: which construct of the formula the language cannot express.
+
+  Choose expression mode whenever it is possible. A compile error is precise,
+  cheap feedback; a python function is the last resort.
+
+evolving_strategy_factor_implementation_v1_system: |-
+  User is trying to implement some factors in the following scenario:
+  {{ scenario }}
+
+  You implement one factor for phasor, a vectorized backtester. Its factor layer
+  is a compiled expression language, and that is the form the evaluator
+  prefers: an expression is checked at compile time (unknown field, bad window,
+  future read) and evaluated over the whole panel at once. A formula the
+  language cannot express is written as plain numpy code instead. You choose
+  exactly one of the two forms for each factor.
+
+  How to choose:
+  - Use expression mode when the formula is built from arithmetic, shifts,
+    rolling windows, cross-sectional operators, comparisons and If/Mask. That
+    covers almost every price-volume, funding and positioning formula.
+  - Use python mode only for logic the operators cannot express: a value that
+    depends on its own past values through a loop (streaks, state machines,
+    recursive updates, path-dependent stops), a numerical routine with no
+    operator (per-window eigen-decomposition, Kalman filter, Hurst exponent),
+    or event-level work that no field provides. If a rolling mean, a shift, a
+    cross-sectional rank or a regression residual already does it, write the
+    expression.
+  - When in doubt, write the expression: the compile error is precise and
+    cheap, and the next iteration can fall back to python.
+
+  {{ data_contract }}
+
+  {{ expression_reference }}
+
+  {{ python_reference }}
+
+  {{ output_format }}
+
+  Your implementation must be based on your former latest attempt: read its
+  feedback carefully and do not change the part that was already correct.
+  Notice that you should not add any other text before or after the json
+  format.
+
+evolving_strategy_factor_implementation_v2_user: |-
+  --------------Target factor information:---------------
+  {{ factor_information_str }}
+
+  {% if latest_attempt_to_latest_successful_execution is not none %}
+  --------------Your former latest attempt:---------------
+  =====Implementation=====
+  {{ latest_attempt_to_latest_successful_execution.implementation.all_codes }}
+  =====Feedback to it=====
+  {{ latest_attempt_to_latest_successful_execution.feedback }}
+  {% endif %}
+
+  {% if error_summary_critics is not none %}
+  --------------Critics on the failures you have already seen:---------------
+  {{ error_summary_critics }}
+  {% endif %}
+
+  {% if queried_similar_successful_knowledge|length != 0 %}
+  Here are successful implementations of similar factors, for reference:
+  {% for knowledge in queried_similar_successful_knowledge %}
+  =====Factor {{ loop.index }}:=====
+  {{ knowledge.target_task.get_task_information() }}
+  =====Implementation:=====
+  {{ knowledge.implementation.all_codes }}
+  {% endfor %}
+  {% endif %}
+
+  {% if queried_similar_error_knowledge|length != 0 %}
+  Here are implementations that met an error and the implementations that fixed
+  them. Do not repeat the error:
+  {% for error_content, similar_error_knowledge in queried_similar_error_knowledge %}
+  =====Factor information ({{ error_content }}):=====
+  {{ similar_error_knowledge[0].target_task.get_task_information() }}
+  =====Implementation with the error=====
+  {{ similar_error_knowledge[0].implementation.all_codes }}
+  =====Implementation that fixed it=====
+  {{ similar_error_knowledge[1].implementation.all_codes }}
+  {% endfor %}
+  {% endif %}
+
+evolving_strategy_error_summary_v2_system: |-
+  User is trying to implement one factor in the following scenario:
+  {{ scenario }}
+
+  The task is:
+  {{ factor_information_str }}
+
+  The latest attempt failed. factor.json is the canonical artefact. In
+  expression mode it holds the expression; in python mode it holds the module.
+  The feedback is the parser or the compiler, not a suggestion to rewrite the
+  formula.
+
+  =====Latest attempt (factor.json)=====
+  {{ latest_implementation }}
+  =====Feedback=====
+  {{ latest_feedback }}
+
+  You may also be shown other factors that met a similar failure and the
+  factor.json that fixed it. Write short critics for the next attempt.
+
+  Rules:
+  - Do not write an expression, python, or a JSON object. The next step writes
+    the factor, and a JSON object here would be copied as the answer.
+  - Name the concrete mistake: a field that is not on the panel, a placeholder
+    with no case, a window that is not a non-negative number, an expression
+    that reads the future, python used where an operator already exists, or a
+    calculate() that does not match the stated formula.
+  - Ignore cosmetic issues. If the failure is only a truncated response, say
+    that in one sentence.
+  - At most four critics. If the feedback already states the only mistake and
+    nothing in the similar fixes adds to it, answer "No critics found".
+
+  critic 1: The critic message
+  critic 2: The critic message
+
+evolving_strategy_error_summary_v2_user: |-
+  {% if similar_errors|length == 0 %}
+  No similar failure from another factor is available. Criticize only the latest attempt.
+  {% else %}
+  Other factors met a similar failure and were then fixed. Treat the fix as the pattern, and do not repeat the failing implementation.
+  {% for error_content, pair in similar_errors %}
+  --------------Similar failure ({{ error_content }}):---------------
+  {{ pair[0].target_task.get_task_information() }}
+  =====factor.json with the failure=====
+  {{ pair[0].implementation.file_dict.get("factor.json", "") }}
+  =====factor.json that fixed it=====
+  {{ pair[1].implementation.file_dict.get("factor.json", "") }}
+  {% endfor %}
+  {% endif %}
