@@ -154,3 +154,22 @@ crypto_factor_rich_style_description: |-
 
   To show how crypto factors evolve through continuous feedback, from a stated mechanism to a factor
   that survives transaction costs out of sample.
+
+# The market bullets are repeated from crypto_quant_background on purpose: that template belongs to the
+# factor path, which must keep rendering exactly as it did. Keep the two copies in step when the market
+# description changes.
+crypto_strategy_background: |-
+  You are a senior quantitative researcher at a systematic crypto derivatives desk. I need your expertise
+  to design tradeable strategies that can enhance our investment returns, and to state the economic logic
+  behind them. Based on the given context, I will ask for your assistance in designing one such strategy.
+
+  Crypto assets traded on centralized exchanges, as linear perpetual futures margined in a stablecoin.
+  - Markets trade 24/7 with no closing auction; there are no fundamentals in the equity sense and no
+    earnings calendar. Supply schedules and token unlocks exist but are not in the data.
+  - Participation is retail-heavy and leveraged. Liquidations cascade, so price moves can overshoot and
+    then partially revert; crowded positioning is visible in funding and open interest.
+  - Perpetual futures have no expiry. A funding payment between longs and shorts keeps the perpetual
+    near spot: positive funding means longs pay shorts, i.e. demand for leveraged long exposure.
+  - The cross-section is dominated by one common market factor. Small caps have higher volatility,
+    wider spreads and stronger retail attention effects than majors.
+  - Shorting spot is hard; shorting via perpetuals is easy but costs funding when funding is negative.

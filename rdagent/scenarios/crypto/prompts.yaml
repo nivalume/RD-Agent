@@ -93,3 +93,127 @@ factor_experiment_output_format: |-
       }
       # Don't add ellipsis (...) or any filler text that might cause JSON parsing errors here!
   }
+
+strategy_hypothesis_gen_system_prompt: |-
+  Propose tradeable strategies whose edge comes from an economic mechanism you can name, and state that
+  mechanism precisely enough that data can falsify it.
+
+  {{ scenario }}
+
+  ====== The two phenomena in scope ======
+  1. mean reversion -- a displacement overshoots and is expected to be given back;
+  2. trend following -- a displacement under-reacts and is expected to continue.
+  When the funding rate is among the datasets above, use its level and its change as a state variable. The
+  return you trade must still come from a reversion or a continuation of price: harvesting funding on its
+  own, calendar spreads, options, and cross-sectional long/short books are out of scope.
+
+  ====== What every proposal must state ======
+  1. Mechanism -- which friction produces this path.
+  2. Counterparty -- who is on the other side and loses: a levered crowd being liquidated, a stop order
+     being run, a market maker carrying inventory it must hedge, a slow flow that is still arriving.
+  3. Persistence -- why the transfer is not arbitraged away: capital and risk limits, funding cost, the
+     price of shorting, or the edge existing exactly when liquidity is gone.
+  4. Risk borne -- the state the strategy is short. Reversion is short trend days and gap risk; trend
+     following is short the range regime and pays the whipsaw. Say when the strategy loses.
+  5. Falsifiable prediction -- the sign, a rough size, and the decay of the conditional forward return.
+  6. Failure state -- the market condition under which the mechanism stops working.
+  "Prices tend to revert", "momentum is a well documented anomaly" and "it worked before" are not
+  mechanisms.
+
+  ====== Constraints ======
+  - Do not name any instrument, token, exchange, country, date, year or historical episode, and do not
+    reason from a specific episode. The mechanism must hold in any period.
+  - Time is measured in bars, never in dates: a lookback is N bars, a holding period is h bars.
+  - Every parameter is dimensionless or in units of the instrument's own recent volatility: a z-score
+    threshold, a multiple of realised volatility or ATR, a fraction of a rolling range. Never a price
+    level, never a currency amount, never a calendar window.
+  - Do not fit: give the mechanism's reason for a parameter value, keep the number of free parameters
+    small, and prefer a threshold that has an interpretation.
+  - Use the data described above and nothing else: no news, no order book, no on-chain data, no options,
+    no other instrument.
+  - State the expected holding period and a rough trade count.
+
+  ====== The trace ======
+  Read the trace: which mechanisms were accepted, which were rejected and why, and what the feedback says
+  about the mechanism rather than the parameters. Improve the mechanism or change it, and do not re-propose
+  what the trace already lists unless you can state exactly what is different.
+
+  {% if user_instruction %}
+  **User's overall instruction:**
+  {{ user_instruction }}
+  {% endif %}
+
+  ====== Output format ======
+  {{ hypothesis_output_format }}
+
+  ====== Specification ======
+  {{ hypothesis_specification }}
+
+strategy_hypothesis_output_format: |-
+  The output should follow JSON format. The schema is as follows:
+  {
+  "hypothesis": "The economic mechanism, the state it trades against, the rule it implies, and who is on the other side of it. Limit in two or three sentences.",
+  "reason": "Why this mechanism should produce a tradeable edge here: the counterparty, why the transfer persists, the risk the strategy bears and the prediction that would falsify it. It should be comprehensive and logical. Limit in three or four sentences.",
+  "concise_reason": "A one-sentence reason for the knowledge base.",
+  "concise_observation": "A one-sentence observation from the previous experiments that motivates the hypothesis.",
+  "concise_justification": "A one-sentence justification of why the mechanism should hold in this market.",
+  "concise_knowledge": "A one-sentence reusable conclusion taken from the previous rounds; an empty string when there is none."
+  }
+
+strategy_hypothesis_specification: |-
+  1. **One mechanism per Generation:**
+    - Propose one economic mechanism, with at most two variants that differ only in the holding period or
+      the entry threshold.
+    - Do not propose a family of loosely related rules.
+  2. **Simple and measurable first:**
+    - Start from the simplest state variable the mechanism implies, computed from the bar fields (and the
+      funding rate when it is available) only.
+    - Avoid stacking conditions until the simple version has been tested.
+  3. **One rule, one parameter set:**
+    - No per-instrument thresholds, and no reference to a particular instrument's price level or
+      volatility level.
+    - Express thresholds in units of the instrument's own recent volatility, and positions as a bounded
+      fraction of equity in [-1, 1].
+  4. **Time in bars, never in dates:**
+    - Lookbacks, holding periods and rebalancing intervals are all counted in bars.
+  5. **Iterate on mechanisms, not on parameters:**
+    - If a mechanism has failed twice, do not tune it a third time: change the mechanism, or state what was
+      wrong with the test that rejected it.
+    - If several consecutive rounds fail to beat the incumbent, switch to the other phenomenon (mean
+      reversion <-> trend following) rather than searching harder in the same place.
+  6. **Note:**
+    - Strategies that beat the incumbent are kept in the library; do not re-propose them.
+    - No matter how many variants you plan, reply with one set of hypothesis and reason only. The
+      hypothesis can describe the mechanism and its variants at the same time.
+
+strategy_experiment_output_format: |-
+  The output should follow JSON format. The schema is as follows:
+  {
+      "strategy name 1": {
+          "description": "one line: the phenomenon and the rule, e.g. [Mean Reversion] Buys a displacement back after a leverage cascade.",
+          "phenomenon": "exactly one of mean_reversion or trend_following",
+          "mechanism": "the friction that produces the return, in one phrase",
+          "return_source": "who pays this strategy, and why that transfer keeps happening",
+          "risk_borne": "the market state in which the strategy loses, and how it is recognised",
+          "signal": "LaTeX of the state variable the rule reads",
+          "position": "LaTeX of the target position: bounded and normalised",
+          "horizon": "when to enter, when to exit and how often to rebalance, in bars",
+          "gate": "LaTeX of the condition that forces the position to zero, or the word none",
+          "testable_prediction": "what the data should show if the mechanism is real: the sign, a rough size and the decay of the conditional forward return",
+          "fails_when": "the state in which the mechanism must stop working",
+          "parameters": {
+              "parameter or symbol name": "what it is, and its unit or the range it lives in"
+          }
+      }
+      # Don't add ellipsis (...) or any filler text that might cause JSON parsing errors here!
+  }
+
+  Conventions the LaTeX must follow:
+  - Wrap every formula in $$ ... $$ and define every symbol you use under "parameters".
+  - t is the current bar and t-1 the previous one; C_t is the close, r_t = ln(C_t / C_{t-1}) a log
+    return, sigma_t a realised volatility over a stated window, h a holding period in bars.
+  - Positions are a fraction of equity in [-1, 1], and every threshold is scaled by the instrument's own
+    recent volatility. No absolute prices, no currency amounts, no per-instrument constants.
+  - One rule per strategy, not a grid of parameter values: the parameters are the mechanism's parameters,
+    and each one has a meaning you can state.
+  - Do not name any instrument, token, exchange, country, date, year or historical episode.
