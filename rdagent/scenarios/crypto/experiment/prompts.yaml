@@ -130,9 +130,9 @@ crypto_factor_simulator: |-
   5. split the sample into an in-sample window, a validation window and a held-out window; only the in-sample and validation results are visible to you.
 
 crypto_factor_experiment_setting: |-
-  | Universe 📊 | Bars ⏱️ | Target 🎯 | Data Split 🧮 |
-  |---------|----------|----------|---------------------------------------------|
-  | Perpetual futures | 1h and 4h | forward return over the holding horizon | In-sample: the older part of the bars <br> Validation: the next part <br> Held-out: the most recent part |
+  | Universe 📊 | Target 🎯 | Data Split 🧮 |
+  |---------|----------|---------------------------------------------|
+  | Perpetual futures | forward return over the holding horizon | In-sample: the older part of the bars <br> Validation: the next part <br> Held-out: the most recent part |
 
 crypto_factor_rich_style_description: |-
   ### R&D Agent-Crypto: Automated Factor Research on Perpetual Futures

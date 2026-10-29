@@ -94,7 +94,7 @@ class CryptoFactorHypothesisGen(FactorHypothesisGen):
             "hypothesis_and_feedback": hypothesis_and_feedback,
             "last_hypothesis_and_feedback": last_hypothesis_and_feedback,
             "RAG": (
-                "Start with simple price-volume factors on the 1h and 4h bars that are quick to implement and test"
+                "Start with simple price-volume factors that are quick to implement and test"
                 if len(trace.hist) < 15
                 else "Now explore factors with stronger cross-sectional or microstructure mechanisms, and condition them on the calendar (session, funding and expiry timing)"
             ),
