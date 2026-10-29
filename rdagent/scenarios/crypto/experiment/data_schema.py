@@ -50,6 +50,13 @@ class Layout:
     time: str
     """What the time column means, in words."""
 
+    duckdb: str | None = None
+    """A single DuckDB file holding the same rows, relative to the data root.
+
+    The data root may keep a dataset in one DuckDB file instead of the csv.gz partitions; either
+    location counts as "the rows are on disk".
+    """
+
 
 LAYOUTS: Mapping[str, Layout] = {
     "market.crypto.bar": Layout(
@@ -60,6 +67,7 @@ LAYOUTS: Mapping[str, Layout] = {
             "`ts_open` is the bar's open time in nanoseconds since the Unix epoch (UTC); a bar's "
             "timestamp is `ts_open`, not `ts_event`."
         ),
+        duckdb="crypto/crypto_bar.duckdb",
     ),
     "market.crypto_funding_rate": Layout(
         directory="crypto/data/crypto_funding_rate",
@@ -69,8 +77,16 @@ LAYOUTS: Mapping[str, Layout] = {
             "`ts_event` is the settlement time in nanoseconds since the Unix epoch (UTC); a bar sees "
             "the latest settlement at or before its close."
         ),
+        duckdb="crypto/crypto_funding_rate.duckdb",
     ),
 }
+
+
+def _rows_on_disk(data_root: Path, layout: Layout) -> bool:
+    """Whether the dataset's rows are there, in either the csv.gz layout or a DuckDB file."""
+    if (data_root / layout.directory).is_dir():
+        return True
+    return layout.duckdb is not None and (data_root / layout.duckdb).is_file()
 
 
 def load_schemas(schema_dir: Path) -> dict[str, DataSchema]:
@@ -96,17 +112,25 @@ def load_schemas(schema_dir: Path) -> dict[str, DataSchema]:
 def render_data_schemas(data_root: Path) -> str:
     """The prompt section of every injectable dataset under data_root, one block each.
 
-    A dataset is injectable when its schema was found and its directory is on disk, so a schema the
+    A dataset is injectable when its schema was found and its rows are on disk, so a schema the
     pipeline wrote before the rows does not reach the prompt.
     """
-    schemas = load_schemas(data_root / "schemas")
+    schema_dir = data_root / "schemas"
+    if not schema_dir.is_dir():
+        # The prompt falls back to "no data schema is available", which reads like a missing setting;
+        # say which directory was looked at so the two causes are distinguishable.
+        logger.warning(f"No data schemas under {schema_dir}: the prompt will not describe any dataset.")
+    schemas = load_schemas(schema_dir)
     blocks = []
     for slug, layout in LAYOUTS.items():
         schema = schemas.get(slug)
         if schema is None:
             continue
-        if not (data_root / layout.directory).is_dir():
-            logger.warning(f"Skipping the data schema {slug}: {data_root / layout.directory} is missing")
+        if not _rows_on_disk(data_root, layout):
+            logger.warning(
+                f"Skipping the data schema {slug}: neither {data_root / layout.directory} "
+                f"nor {data_root / layout.duckdb} is on disk"
+            )
             continue
         blocks.append(_render(schema, layout))
     return "\n\n".join(blocks)

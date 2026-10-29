@@ -83,6 +83,19 @@ def test_render_skips_a_schema_without_its_rows(tmp_path):
     assert render_data_schemas(root) == ""
 
 
+def test_render_accepts_a_duckdb_file_instead_of_the_csv_partitions(tmp_path):
+    # The data root may keep a dataset in one DuckDB file; the rows are still on disk.
+    root = make_root(tmp_path)
+    write(root, "market.crypto.bar.v1.json", BAR)
+    (root / "crypto").mkdir(exist_ok=True)
+    (root / "crypto" / "crypto_bar.duckdb").write_bytes(b"")
+
+    text = render_data_schemas(root)
+
+    assert "market.crypto.bar" in text
+    assert "| `close` | decimal(38,18) | Last traded price in the bar. |" in text
+
+
 def test_render_shows_the_columns_with_their_types_and_descriptions(tmp_path):
     root = make_root(tmp_path, "crypto_bar")
     write(root, "market.crypto.bar.v1.json", BAR)
