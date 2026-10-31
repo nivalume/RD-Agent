@@ -1,0 +1,250 @@
+strategy_data_contract: |-
+  ## The panel and what a strategy returns
+
+  A strategy is one target position per bar and per instrument: a (T, S) float64
+  array, T bar times (ascending, UTC) by S instruments in a fixed order. The
+  same rule with the same parameters runs on every instrument.
+
+  The runtime hands the strategy an already loaded and aligned panel:
+  - row t is the close of a bar; a value at row t may read rows <= t of every
+    column. A position decided at the close of row t is traded one bar later, so
+    it never needs to anticipate anything;
+  - fields: {{ fields }}. `amount` is the quote volume (USDT), `count` the number
+    of trades, `taker_buy_amount` the quote volume bought by takers, and
+    `funding_rate` the funding settled at that row's close (NaN on the other
+    rows): positive means longs paid shorts;
+  - NaN means missing: a bar the instrument did not trade, or no funding at that
+    row. Leave NaN as NaN;
+  - leading NaNs are the warmup and must not be filled by hand.
+
+  What the position means:
+  - it is the share of the instrument's risk budget to hold, in [-1, 1]: 1 is
+    fully long, -1 fully short, 0 or NaN flat. The framework then scales each
+    instrument to the same volatility, keeps only the instruments in the
+    top-volume pool, and averages them. So never size by volatility, price level
+    or liquidity yourself, and never pick instruments: express the rule;
+  - every value must lie in [-1, 1]: wrap anything unbounded in `Clip(x, -1, 1)`
+    or `Sign(x)`. A value outside is rejected;
+  - a position that is a continuous function of the signal (`Clip(z / 2, -1, 1)`)
+    trades a little every bar; one with thresholds and holds (`If`, a state
+    machine) trades less. Each trade costs about 0.07% of its value.
+
+  The strategy is checked on a debug panel first: a value that moves when later
+  rows are removed is a look-ahead bug and is rejected, as are positions that are
+  flat everywhere.
+
+strategy_python_reference: |-
+  ## Python fallback
+
+  Use Python only when the expression language cannot express the rule: a
+  position that depends on its own earlier values (enter on one condition, hold
+  until another, a trailing stop, a cooldown after an exit), or a numerical
+  routine with no operator. Entry and exit with a hold is the usual reason for a
+  strategy; a plain transform of an indicator is not.
+
+  ### Contract
+
+  ```python
+  import numpy as np
+
+  def calculate(fields, index, symbols):
+      close = fields["close"]          # (T, S) float64, read-only
+      ...
+      return positions                 # (T, S) float64 in [-1, 1], NaN for flat
+  ```
+
+  - `fields`: a dict of name -> (T, S) float64 array, write-protected.
+  - `index`: (T,) int64 UTC nanoseconds of the bar closes, ascending.
+  - `symbols`: tuple of names, length S. Do not treat any symbol differently.
+  - Row t may read rows <= t only. No `np.roll` without masking its wrap-around,
+    no centred windows, no reversed arrays, no future-filling.
+  - Imports: numpy and the standard library only. Pure and deterministic: no
+    files, network, environment, randomness, or printing.
+  - Loop over rows when the position depends on its own past; a loop over
+    symbols is fine. The budget is the whole panel in a few seconds.
+
+  ### Example: enter on an oversold z-score, hold until it reverts
+
+  ```python
+  import numpy as np
+
+  def calculate(fields, index, symbols):
+      close = fields["close"]
+      rows, columns = close.shape
+      log_close = np.log(close)
+      mean = np.full_like(close, np.nan)
+      std = np.full_like(close, np.nan)
+      window = 30
+      for t in range(window - 1, rows):
+          part = log_close[t - window + 1 : t + 1]
+          mean[t] = np.nanmean(part, axis=0)
+          std[t] = np.nanstd(part, axis=0)
+      z = (log_close - mean) / std
+      position = np.zeros_like(close)
+      for t in range(1, rows):
+          held = position[t - 1]
+          enter = z[t] < -2.0
+          leave = z[t] > 0.0
+          position[t] = np.where(enter, 1.0, np.where(leave, 0.0, held))
+      position[~np.isfinite(close)] = np.nan
+      return position
+  ```
+
+strategy_output_format: |-
+  ## Output format
+
+  Respond with one JSON object and nothing else. `mode` is exactly
+  `"expression"` or `"python"`.
+
+  Expression mode -- the expression is the position itself:
+
+  ```json
+  {
+      "mode": "expression",
+      "expression": "Sign(Mean($close, {n}) - Mean($close, 4*{n}))",
+      "params": {"n": [6, 12, 24]},
+      "fields": ["close"],
+      "reason": "Long when the fast mean is above the slow one, short below; Sign bounds it to [-1, 1]."
+  }
+  ```
+
+  - `expression`: one expression in the language above whose value is the
+    position, already in [-1, 1].
+  - `params`: optional. Every `{name}` must have a case here: at most 2
+    parameters and 6 cases in total, spanning the values the strategy's
+    parameters allow. Each case is backtested; the case chosen on the training
+    period is reported, and the spread across cases is the sensitivity test.
+  - `fields`: the field names used, without the `$`.
+  - `reason`: at most two sentences: how the expression implements the signal,
+    the position and the gate of the strategy.
+
+  Python mode:
+
+  ```json
+  {
+      "mode": "python",
+      "code": "import numpy as np\n\ndef calculate(fields, index, symbols):\n    ...\n    return positions\n",
+      "fields": ["close"],
+      "reason": "The position holds until an exit condition, which depends on its own past."
+  }
+  ```
+
+  - `code`: the whole module as one string, newlines escaped as `\n`. It must
+    define `calculate` and run nothing at import time. Write the parameter values
+    in the code: python mode has no parameter cases.
+  - `reason`: which part of the rule the language cannot express.
+
+  Choose expression mode whenever the rule allows it.
+
+strategy_implementation_system: |-
+  User is trying to implement trading strategies in the following scenario:
+  {{ scenario }}
+
+  You implement one strategy for phasor, a vectorized backtester, as the target
+  position it takes on every instrument at every bar. Its expression language is
+  what the evaluator prefers: an expression is checked at compile time (unknown
+  field, bad window, future read) and evaluated over the whole panel at once.
+  A rule the language cannot express is written as plain numpy code instead.
+  You choose exactly one of the two forms.
+
+  Implement the strategy as specified: its signal, position, horizon and gate.
+  Use the parameter values it states; when it gives a range, make it a
+  parameter with a few cases across that range. Do not add conditions it does
+  not state, and do not tune anything to a period or an instrument.
+
+  {{ data_contract }}
+
+  {{ expression_reference }}
+
+  {{ python_reference }}
+
+  {{ output_format }}
+
+  Your implementation must be based on your former latest attempt: read its
+  feedback carefully and do not change the part that was already correct.
+  Do not add any other text before or after the JSON object.
+
+strategy_implementation_user: |-
+  --------------Target strategy:---------------
+  {{ strategy_information_str }}
+
+  {% if latest_attempt_to_latest_successful_execution is not none %}
+  --------------Your former latest attempt:---------------
+  =====Implementation=====
+  {{ latest_attempt_to_latest_successful_execution.implementation.all_codes }}
+  =====Feedback to it=====
+  {{ latest_attempt_to_latest_successful_execution.feedback }}
+  {% endif %}
+
+  {% if error_summary_critics is not none %}
+  --------------Critics on the failures you have already seen:---------------
+  {{ error_summary_critics }}
+  {% endif %}
+
+  {% if queried_similar_successful_knowledge|length != 0 %}
+  Here are successful implementations of similar strategies, for reference:
+  {% for knowledge in queried_similar_successful_knowledge %}
+  =====Strategy {{ loop.index }}:=====
+  {{ knowledge.target_task.get_task_information() }}
+  =====Implementation:=====
+  {{ knowledge.implementation.all_codes }}
+  {% endfor %}
+  {% endif %}
+
+  {% if queried_similar_error_knowledge|length != 0 %}
+  Here are implementations that met an error and the implementations that fixed
+  them. Do not repeat the error:
+  {% for error_content, similar_error_knowledge in queried_similar_error_knowledge %}
+  =====Strategy information ({{ error_content }}):=====
+  {{ similar_error_knowledge[0].target_task.get_task_information() }}
+  =====Implementation with the error=====
+  {{ similar_error_knowledge[0].implementation.all_codes }}
+  =====Implementation that fixed it=====
+  {{ similar_error_knowledge[1].implementation.all_codes }}
+  {% endfor %}
+  {% endif %}
+
+strategy_error_summary_system: |-
+  User is trying to implement one trading strategy in the following scenario:
+  {{ scenario }}
+
+  The strategy is:
+  {{ strategy_information_str }}
+
+  The latest attempt failed. strategy.json is the whole artefact: in expression
+  mode it holds the position expression, in python mode the module. The feedback
+  comes from the parser, the compiler or the checks on the debug panel.
+
+  =====Latest attempt (strategy.json)=====
+  {{ latest_implementation }}
+  =====Feedback=====
+  {{ latest_feedback }}
+
+  You may also be shown other strategies that met a similar failure and the
+  strategy.json that fixed it. Write short critics for the next attempt.
+
+  Rules:
+  - Do not write an expression, python, or a JSON object: the next step writes the strategy.
+  - Name the concrete mistake: a field that is not on the panel, a position outside
+    [-1, 1], a look-ahead (which row read which later row), flat positions, a
+    placeholder with no case, or code that does not match the stated rule.
+  - At most four critics. If the feedback already states the only mistake, answer
+    "No critics found".
+
+  critic 1: The critic message
+  critic 2: The critic message
+
+strategy_error_summary_user: |-
+  {% if similar_errors|length == 0 %}
+  No similar failure from another strategy is available. Criticize only the latest attempt.
+  {% else %}
+  Other strategies met a similar failure and were then fixed. Treat the fix as the pattern.
+  {% for error_content, pair in similar_errors %}
+  --------------Similar failure ({{ error_content }}):---------------
+  {{ pair[0].target_task.get_task_information() }}
+  =====strategy.json with the failure=====
+  {{ pair[0].implementation.file_dict.get("strategy.json", "") }}
+  =====strategy.json that fixed it=====
+  {{ pair[1].implementation.file_dict.get("strategy.json", "") }}
+  {% endfor %}
+  {% endif %}

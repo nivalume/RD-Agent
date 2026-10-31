@@ -1,0 +1,86 @@
+strategy_panel_data: |-
+  The strategies run on a panel of USDT-margined perpetual futures on one exchange:
+  - one row per {{ interval }} bar, labelled with the bar's close time (UTC){% if first %}, from {{ first }} to {{ last }}{% endif %};
+  - one column per instrument{% if instruments %}: {{ instruments }} instruments, listed and delisted over the period{% endif %};
+  - fields: open, high, low, close, volume (base asset), amount (quote volume, USDT), count (trades),
+    taker_buy_amount (quote volume bought by takers), funding_rate (the funding settled at that bar's
+    close, NaN on bars without a settlement; positive means longs pay shorts).
+  - A bar the instrument did not trade, before its listing or after its delisting, is NaN.
+
+  The instruments traded at a bar are the pool: each month, the {{ pool }} instruments with the highest
+  mean daily quote volume over the previous 30 days (no look-ahead). A strategy states a position for
+  every instrument; outside the pool it is set to zero.
+
+strategy_evaluation_setting: |-
+  How a strategy is evaluated:
+  - Its position at the close of bar t is traded at the close of bar t+{{ settings.delay }}.
+  - Each instrument's position is scaled to an annualised volatility of {{ "%.0f" % (settings.target_vol * 100) }}%
+    (realised over the previous {{ settings.vol_lookback }} bars, at most {{ settings.max_leverage }} times the
+    position), and the instruments of the pool are averaged in one account with shared cash, long and short.
+  - Every trade pays {{ "%.2f" % (settings.fee * 100) }}% fee and {{ "%.2f" % (settings.slippage * 100) }}% slippage; funding is paid
+    or received on every settlement while a position is held.
+  - The periods: train {{ settings.train_start }} to {{ settings.train_end }}, valid {{ settings.valid_start }} to
+    {{ settings.valid_end }}{% if hide_test %}; a later test period is kept out of everything shown to you{% endif %}.
+  - Every parameter case is backtested; the one with the best train Sharpe is chosen, and the valid
+    period judges it.
+  - A strategy is accepted only when its valid Sharpe is above {{ settings.min_valid_sharpe }}, one more bar
+    of delay keeps at least {{ "%.0f" % ((1 - settings.max_delay_loss) * 100) }}% of it, and a block-permutation test of its
+    train and valid returns gives a p-value of at most {{ settings.max_p_value }}. Among accepted strategies, the
+    best is the one with the highest valid alpha Sharpe: its returns after removing the beta to the
+    equal-weight market.
+
+strategy_feedback_system: |-
+  You are a quantitative researcher reviewing a round of crypto strategy research.
+
+  {{ scenario }}
+
+  A round tests one hypothesis with one or a few strategies. For each strategy you are given its
+  specification (mechanism, rule, testable prediction, when it fails), the code that implemented it,
+  and its evaluation on the train and valid periods: the metrics of the chosen case and of every case,
+  robustness statistics, and diagnostics:
+  - signed_forward_return_by_horizon: the mean return in the direction of the position, h bars after
+    it is decided, before costs. It tests the stated prediction: its sign, its size and how it decays.
+  - next_return_by_position_quintile: the next bar's return by the size of the position.
+
+  The decision is not yours: the hard gates and the comparison with the best strategy so far decide it,
+  and you are told the outcome. Your job is to explain it and point the next round:
+  - Judge the mechanism, not the luck: did the diagnostics show the predicted sign and decay? Is the
+    return explained by the market beta, by funding, or eaten by costs? Is it carried by one year or one
+    parameter case?
+  - When a strategy failed a gate, say what the failure means for the mechanism.
+  - Propose what the next round should test: a sharper version of the same mechanism, the condition
+    under which it should hold, or a different mechanism when this one has failed twice.
+
+  Respond with one JSON object:
+  {
+      "observations": "what the numbers and diagnostics show, strategy by strategy, in at most five sentences",
+      "hypothesis_evaluation": "whether the evidence supports the mechanism of the hypothesis, and why",
+      "new_hypothesis": "the hypothesis the next round should test, in one or two sentences",
+      "reason": "why that is the next step, in one or two sentences"
+  }
+
+strategy_feedback_user: |-
+  # Hypothesis
+  {{ hypothesis }}
+
+  {% for strategy in strategies %}
+  # Strategy {{ loop.index }}: {{ strategy.name }}
+  ## Specification
+  {{ strategy.information }}
+  ## Implementation (strategy.json)
+  {{ strategy.code }}
+  ## Evaluation (train and valid)
+  {{ strategy.evaluation }}
+  ## Hard gates
+  {% if strategy.failures %}Failed: {{ strategy.failures | join("; ") }}{% else %}Passed.{% endif %}
+
+  {% endfor %}
+  # Outcome
+  {{ outcome }}
+
+  {% if sota %}
+  # The best strategy so far
+  {{ sota }}
+  {% else %}
+  No earlier strategy has been accepted.
+  {% endif %}
