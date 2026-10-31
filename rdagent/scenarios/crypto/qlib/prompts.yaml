@@ -1,0 +1,91 @@
+crypto_qlib_setting: |-
+  How the factors and models are evaluated, on qlib:
+  - Universe: the `{{ market }}` pool. On the first day of each month it is the USD-M perpetuals quoted in
+    USDT with the highest mean daily quote volume over the 30 days before that day (an instrument needs
+    bars on at least 20 of them); delisted instruments are included while they traded, so there is no
+    survivorship bias. Nothing of the month itself chooses the pool.
+  - Frequency: one row per instrument per UTC day; the value of a day is known at its end (00:00 UTC of
+    the next day). Every day is a trading day, weekends included.
+  - Label: `Ref($close, -2) / Ref($close, -1) - 1`, the return from the close of the next day to the close
+    of the day after, normalised across the instruments of each day. A factor of day t predicts it.
+  - Model: by default a LightGBM regressor on a set of base price-volume features plus the factors.
+  - Backtest: each day, hold the {{ topk }} instruments with the highest prediction, long only and equally
+    weighted, replacing at most {{ n_drop }} a day, trading at the close with a cost of {{ open_cost }} on
+    each buy and {{ close_cost }} on each sale; compared with {{ benchmark }}. Returns are price returns:
+    funding payments are not in them.
+  - Metrics: IC and Rank IC of the predictions against the label (mean and IR across days), and the
+    annualised return, information ratio and maximum drawdown of the backtest, annualised over 365 days.
+  - Segments: train {{ train_start }} to {{ train_end }}, valid {{ valid_start }} to {{ valid_end }},
+    test {{ test_start }} to {{ test_end or "the last day of the data" }}.
+  Because the cross-section moves with one common market factor, what predicts the label is the part of
+  the return that differs between instruments on the same day: a factor helps when it ranks the
+  instruments, not when it times the market.
+
+crypto_qlib_factor_background: |-
+  {{ factor_background }}
+
+  The calendar of the market:
+  {{ calendar }}
+
+crypto_qlib_model_background: |-
+  You are one of the most authoritative quantitative researchers at a top crypto hedge fund. I need your
+  expertise to develop new models that can enhance our investment returns.
+
+  {{ market }}
+
+  The model is a machine learning or deep learning structure used in quantitative investment to predict the returns and risks of a portfolio or a single asset. Models are employed by investors to generate forecasts based on historical data and identified factors, which are central to many quantitative investment strategies.
+  Each model takes the factors as input and predicts the future returns.
+  The model is defined in the following parts:
+  1. Name: The name of the model.
+  2. Description: The description of the model.
+  3. Architecture: The detailed architecture of the model, such as neural network layers or tree structures.
+  4. Hyperparameters: The hyperparameters used in the model.
+  5. Training_hyperparameters: The hyperparameters used during the training process.
+  6. ModelType: The type of the model, "Tabular" for tabular model and "TimeSeries" for time series model.
+  The model should provide clear and detailed documentation of its architecture and hyperparameters. One model should statically define one output with a fixed architecture and hyperparameters.
+  The daily cross-section holds about a hundred instruments over a few years, far fewer samples than an
+  equity market: prefer models that resist overfitting to models with many parameters.
+
+  {% if runtime_environment is not none %}
+  ====== Runtime Environment ======
+  You have following environment to run the code:
+  {{ runtime_environment }}
+  {% endif %}
+
+crypto_qlib_quant_background: |-
+  Quantitative investment is a data-driven approach to asset management that relies on mathematical models, statistical techniques, and computational methods to analyze financial markets and make investment decisions. Two essential components of this approach are factors and models.
+
+  You are one of the most authoritative quantitative researchers at a top crypto hedge fund. I need your expertise to develop new factors and models that can enhance our investment returns. Based on the given context, I will ask for your assistance in designing and implementing either factors or a model.
+
+  {{ market }}
+
+  {% if runtime_environment is not none %}
+  ====== Runtime Environment ======
+  You have following environment to run the code:
+  {{ runtime_environment }}
+  {% endif %}
+
+crypto_qlib_factor_simulator: |-
+  The factors will be sent into Qlib to train a model that predicts the next days' returns of crypto perpetuals from the factor values of the previous days.
+  User will use Qlib to automatically do the following things:
+  1. generate a new factor table based on the factor values.
+  2. train a model like LightGBM to predict the label from the factors.
+  3. build a portfolio from the predictions with the strategy below.
+  4. evaluate the predictions and the portfolio.
+
+  {{ setting }}
+
+crypto_qlib_model_simulator: |-
+  The models will be sent into Qlib to train and evaluate their performance in predicting the next days' returns of crypto perpetuals. Hypothesis is improved upon checking the feedback on the results.
+  User will use Qlib to automatically perform the following tasks:
+  1. Generate a baseline factor table.
+  2. Train the model defined in your class Net to predict the label from the factors.
+  3. Build a portfolio from the predictions with the strategy below.
+  4. Evaluate the predictions and the portfolio, and iterate on the hypothesis.
+
+  {{ setting }}
+
+crypto_qlib_experiment_setting: |-
+  | Dataset 📊 | Model 🤖 | Factors 🌟 | Data Split 🧮 |
+  |---------|----------|---------------|-------------------------------------------------|
+  | Binance USD-M USDT perpetuals, {{ market }} | {{ model }} | {{ factors }} | Train: {{ train_start }} to {{ train_end }} <br> Valid: {{ valid_start }} to {{ valid_end }} <br> Test &nbsp;: {{ test_start }} to {{ test_end or "latest" }} |

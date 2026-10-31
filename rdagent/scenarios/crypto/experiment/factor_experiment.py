@@ -71,6 +71,7 @@ class CryptoFactorScenario(Scenario):
         self._runtime_environment: str | None = None
         self._background = self._render(
             "crypto_quant_background",
+            market=self._render("crypto_market"),
             runtime_environment=self.get_runtime_environment() or None,
         )
         self._calendar = self._render("crypto_quant_calendar")
@@ -165,9 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     """Print the scenario prompt, or the named sections of it."""
     parser = argparse.ArgumentParser(
         prog="python -m rdagent.scenarios.crypto.experiment.factor_experiment",
-        description=(
-            "Render the crypto factor prompts. Without a section the whole scenario prompt is printed."
-        ),
+        description=("Render the crypto factor prompts. Without a section the whole scenario prompt is printed."),
     )
     parser.add_argument(
         "sections",

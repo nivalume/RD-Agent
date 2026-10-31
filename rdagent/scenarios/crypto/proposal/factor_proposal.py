@@ -20,7 +20,10 @@ from rdagent.components.proposal import FactorHypothesis2Experiment, FactorHypot
 from rdagent.core.proposal import ExperimentPlan, Hypothesis, Scenario, Trace
 from rdagent.oai.llm_conf import LLM_SETTINGS
 from rdagent.oai.llm_utils import APIBackend
-from rdagent.scenarios.crypto.experiment.factor_experiment import CryptoFactorExperiment, CryptoFactorScenario
+from rdagent.scenarios.crypto.experiment.factor_experiment import (
+    CryptoFactorExperiment,
+    CryptoFactorScenario,
+)
 from rdagent.utils.agent.tpl import T
 
 CRYPTO_PROMPTS = "scenarios.crypto.prompts"
@@ -116,6 +119,10 @@ class CryptoFactorHypothesisGen(FactorHypothesisGen):
 
 
 class CryptoFactorHypothesis2Experiment(FactorHypothesis2Experiment):
+    experiment_cls: type[FactorExperiment] = CryptoFactorExperiment
+    """The experiment a hypothesis becomes; the qlib loop uses its own (see
+    :mod:`rdagent.scenarios.crypto.qlib.proposal`)."""
+
     def prepare_context(self, hypothesis: Hypothesis, trace: Trace) -> Tuple[dict, bool]:
         hypothesis_and_feedback = (
             T(f"{CRYPTO_PROMPTS}:hypothesis_and_feedback").r(trace=trace)
@@ -136,10 +143,10 @@ class CryptoFactorHypothesis2Experiment(FactorHypothesis2Experiment):
 
         # Every factor implemented in an earlier successful round is already in the library; proposing
         # it again would only re-implement it.
-        based_experiments = [CryptoFactorExperiment(sub_tasks=[])] + [
+        based_experiments = [self.experiment_cls(sub_tasks=[])] + [
             experiment
             for experiment, feedback in trace.hist
-            if feedback and isinstance(experiment, CryptoFactorExperiment)
+            if feedback and isinstance(experiment, self.experiment_cls)
         ]
         implemented = {task.factor_name for experiment in based_experiments for task in experiment.sub_tasks}
 
@@ -154,7 +161,7 @@ class CryptoFactorHypothesis2Experiment(FactorHypothesis2Experiment):
             if factor_name not in implemented
         ]
 
-        experiment = CryptoFactorExperiment(tasks, hypothesis=hypothesis)
+        experiment = self.experiment_cls(tasks, hypothesis=hypothesis)
         experiment.based_experiments = based_experiments
         return experiment
 
@@ -222,9 +229,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"model: {LLM_SETTINGS.chat_model}")
     print(f"base: {LLM_SETTINGS.openai_api_base or '<the provider default>'}")
-    print(
-        f"api key: {'set' if os.environ.get('OPENAI_API_KEY') else 'MISSING (export ARK_API_KEY or OPENAI_API_KEY)'}"
-    )
+    print(f"api key: {'set' if os.environ.get('OPENAI_API_KEY') else 'MISSING (export ARK_API_KEY or OPENAI_API_KEY)'}")
     print("\n===== system prompt =====")
     print(system_prompt)
     print("\n===== user prompt =====")

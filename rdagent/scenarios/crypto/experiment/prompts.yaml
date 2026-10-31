@@ -1,8 +1,4 @@
-crypto_quant_background: |-
-  You are one of the most authoritative quantitative researchers at a top crypto hedge fund. I need your
-  expertise to develop new factors that can enhance our investment returns. Based on the given context, I
-  will ask for your assistance in designing and implementing a factor.
-
+crypto_market: |-
   Crypto assets traded on centralized exchanges, as linear perpetual futures margined in a stablecoin.
   - Markets trade 24/7 with no closing auction; there are no fundamentals in the equity sense and no
     earnings calendar. Supply schedules and token unlocks exist but are not in the data.
@@ -13,6 +9,13 @@ crypto_quant_background: |-
   - The cross-section is dominated by one common market factor. Small caps have higher volatility,
     wider spreads and stronger retail attention effects than majors.
   - Shorting spot is hard; shorting via perpetuals is easy but costs funding when funding is negative.
+
+crypto_quant_background: |-
+  You are one of the most authoritative quantitative researchers at a top crypto hedge fund. I need your
+  expertise to develop new factors that can enhance our investment returns. Based on the given context, I
+  will ask for your assistance in designing and implementing a factor.
+
+  {{ market }}
 
 
   The factor is a characteristic or variable used in quant investment that can help explain the returns and risks of a portfolio or a single asset. Factors are used by investors to identify and exploit sources of excess returns, and they are central to many quantitative investment strategies.
