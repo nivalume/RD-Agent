@@ -244,10 +244,12 @@ class BacktestSettings:
 @dataclass
 class Backtest:
     returns: np.ndarray  # (T,) the account's return over each bar
-    weights: np.ndarray  # (T, S) the weights held over each bar (after delay)
+    weights: np.ndarray  # (T, S) the weights set at the close of each bar (after delay)
     asset_returns: np.ndarray  # (T, S) close-to-close returns
     funding: np.ndarray  # (T,) funding paid (negative) or received over each bar, as a return
     costs: np.ndarray  # (T,) fees and slippage of each bar, as a return
+    portfolio: Any = None  # the phasor Portfolio; a trade is a round trip on one instrument
+    cost_rate: float = 0.0  # fee and slippage per unit of turnover
 
 
 def _ffill(values: np.ndarray) -> np.ndarray:
@@ -296,35 +298,39 @@ def backtest(raw: np.ndarray, panel: Panel, settings: BacktestSettings = Backtes
         group_lens=[prices.shape[1]],
         init_cash=1.0,
         ann_factor=panel.bars_per_year,
+        trades="positions",
     )
     returns = np.nan_to_num(np.asarray(portfolio.returns(), dtype=np.float64).reshape(-1))
     held = _shift(weights, 1)  # what is held over bar t is what was set at the close of t - 1
     paid = (held * funding).sum(axis=1)
     turnover = np.abs(np.diff(np.vstack([np.zeros((1, weights.shape[1])), weights]), axis=0)).sum(axis=1)
-    return Backtest(returns, weights, asset_returns, -paid, -(settings.fee + settings.slippage) * turnover)
+    rate = settings.fee + settings.slippage
+    return Backtest(returns, weights, asset_returns, -paid, -rate * turnover, portfolio, rate)
 
 
 # -- metrics -----------------------------------------------------------------------------------
 
 
 def _sharpe(returns: np.ndarray, bars_per_year: float) -> float:
-    if len(returns) < 2 or np.std(returns) == 0:
+    import phasor
+
+    if len(returns) < 2:
         return float("nan")
-    return float(np.mean(returns) / np.std(returns, ddof=1) * math.sqrt(bars_per_year))
+    value = float(phasor.returns.metric(returns, "sharpe_ratio", ann_factor=bars_per_year))
+    return value if math.isfinite(value) else float("nan")
 
 
-def _max_drawdown(returns: np.ndarray) -> float:
-    if not len(returns):
+def _span(rows: np.ndarray) -> tuple[int, int]:
+    """The first row of a segment and the row after its last (segments are contiguous)."""
+    found = np.flatnonzero(rows)
+    return int(found[0]), int(found[-1]) + 1
+
+
+def _float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
         return float("nan")
-    wealth = np.cumprod(1 + returns)
-    peaks = np.maximum.accumulate(wealth)
-    return float((wealth / peaks - 1).min())
-
-
-def _beta(returns: np.ndarray, market: np.ndarray) -> float:
-    if len(returns) < 2 or np.var(market) == 0:
-        return float("nan")
-    return float(np.cov(returns, market)[0, 1] / np.var(market, ddof=1))
 
 
 def market_returns(panel: Panel) -> np.ndarray:
@@ -338,14 +344,41 @@ def market_returns(panel: Panel) -> np.ndarray:
     return np.where(counts > 0, total / np.maximum(counts, 1), 0.0)
 
 
+def trade_stats(trades: dict, first: int, stop: int) -> dict[str, Any]:
+    """The round trips that closed in rows ``first:stop``: their count, win rate, profit factor
+    (gains over losses, in cash) and the mean bars a winner and a loser was held."""
+    exit_idx = np.asarray(trades["exit_idx"])
+    closed = (np.asarray(trades["status"]) == 1) & (exit_idx >= first) & (exit_idx < stop)
+    pnl = np.asarray(trades["pnl"], dtype=np.float64)[closed]
+    duration = np.asarray(trades["duration"], dtype=np.float64)[closed]
+    wins, losses = pnl > 0, pnl < 0
+    lost = -pnl[losses].sum()
+    return {
+        "trades": int(closed.sum()),
+        "trade_win_rate": float(wins.mean()) if pnl.size else float("nan"),
+        "profit_factor": float(pnl[wins].sum() / lost) if lost > 0 else float("nan"),
+        "mean_winning_trade_bars": float(duration[wins].mean()) if wins.any() else float("nan"),
+        "mean_losing_trade_bars": float(duration[losses].mean()) if losses.any() else float("nan"),
+    }
+
+
 def metrics(run: Backtest, panel: Panel, rows: np.ndarray) -> dict[str, Any]:
-    """The statistics of a backtest over the rows of a segment (a boolean mask)."""
+    """The statistics of a backtest over the rows of a segment (a contiguous boolean mask).
+
+    The return statistics are ``phasor.returns.stats`` of the account's returns against the
+    equal-weight market; the trade statistics come from the phasor portfolio's round trips
+    (``trades="positions"``: entry to flat on one instrument, resizing included) closed in the
+    segment. The rest -- turnover, exposure,
+    funding, costs, years, instruments -- phasor does not know about."""
+    import phasor
+
     bars_per_year = panel.bars_per_year
     returns = run.returns[rows]
     if returns.size < 2:
         return {"bars": int(returns.size)}
     market = market_returns(panel)[rows]
-    beta = _beta(returns, market)
+    stats = phasor.returns.stats(returns, benchmark=market, ann_factor=bars_per_year)
+    beta = _float(stats["beta"])
     alpha = returns - (0.0 if math.isnan(beta) else beta) * market
     weights = run.weights[rows]
     gross = np.abs(weights).sum(axis=1)
@@ -358,10 +391,17 @@ def metrics(run: Backtest, panel: Panel, rows: np.ndarray) -> dict[str, Any]:
     btc = panel.symbols.index("BTCUSDT") if "BTCUSDT" in panel.symbols else None
     found = {
         "bars": int(returns.size),
-        "annual_return": float(np.mean(returns) * bars_per_year),
-        "annual_volatility": float(np.std(returns, ddof=1) * math.sqrt(bars_per_year)),
+        "annual_return": _float(stats["annualized_return"]),
+        "annual_volatility": _float(stats["annualized_volatility"]),
         "sharpe": _sharpe(returns, bars_per_year),
-        "max_drawdown": _max_drawdown(returns),
+        "sortino": _float(stats["sortino_ratio"]),
+        "calmar": _float(stats["calmar_ratio"]),
+        "omega": _float(stats["omega_ratio"]),
+        "max_drawdown": _float(stats["max_drawdown"]),
+        "max_drawdown_duration_bars": _float(stats["max_drawdown_duration"]),
+        "max_drawdown_recovery_bars": _float(stats["max_drawdown_recovery"]),
+        "hit_ratio": _float(stats["hit_ratio"]),
+        "return_concentration": _float(stats["return_concentration"]),
         "beta_to_market": beta,
         "alpha_sharpe": _sharpe(alpha, bars_per_year),
         "annual_turnover": float(turnover.mean() * bars_per_year),
@@ -379,8 +419,12 @@ def metrics(run: Backtest, panel: Panel, rows: np.ndarray) -> dict[str, Any]:
         "instruments_profitable": float((contributions[traded] > 0).mean()) if traded.any() else float("nan"),
         "yearly_return": {str(year): value for year, value in yearly.items()},
     }
+    if run.portfolio is not None:
+        found.update(trade_stats(run.portfolio.trades(), *_span(rows)))
     if btc is not None:
-        found["beta_to_btc"] = _beta(returns, np.nan_to_num(run.asset_returns[rows, btc]))
+        found["beta_to_btc"] = _float(
+            phasor.returns.metric(returns, "beta", benchmark=np.nan_to_num(run.asset_returns[rows, btc]))
+        )
     return found
 
 
@@ -391,58 +435,113 @@ def permutation_p_value(run: Backtest, rows: np.ndarray, n: int = 200, block: in
     """How often shuffled returns (blocks of bars, the same shuffle for every instrument, so their
     co-movement is kept) give a Sharpe at least as high as the strategy's. A low value says the
     timing of the positions matters."""
-    weights = _shift(run.weights, 1)[rows]
+    from phasor import validation
+
+    held = _shift(run.weights, 1)[rows]
     asset = np.nan_to_num(run.asset_returns[rows])
     if len(asset) < 2 * block:
         return float("nan")
+    return float(validation.permutation_test(held, asset, statistic="sharpe", n=n, block=block, seed=seed)["p_value"])
 
-    def sharpe(values: np.ndarray) -> float:
-        pnl = (weights * values).sum(axis=1)
-        deviation = pnl.std()
-        return float(pnl.mean() / deviation) if deviation > 0 else 0.0
 
-    observed = sharpe(asset)
-    blocks = [asset[start : start + block] for start in range(0, len(asset), block)]
-    generator = np.random.default_rng(seed)
-    beaten = 0
-    for _ in range(n):
-        order = generator.permutation(len(blocks))
-        shuffled = np.concatenate([blocks[index] for index in order])[: len(asset)]
-        beaten += sharpe(shuffled) >= observed
-    return (1 + beaten) / (n + 1)
+def delay_curve(run: Backtest, panel: Panel, rows: np.ndarray, extra=(0, 1, 2, 3)) -> dict[str, float]:
+    """The segment's Sharpe with the weights held ``d`` more bars late, before funding: the book's
+    alpha-decay test. Costs are charged on the delayed turnover."""
+    from phasor import validation
+
+    held = _shift(run.weights, 1)[rows]
+    asset = np.nan_to_num(run.asset_returns[rows])
+    curve = validation.position_delay_test(
+        held, asset, delays=extra, cost=run.cost_rate, ann_factor=panel.bars_per_year
+    )
+    return {str(delay): (value if math.isfinite(value) else float("nan")) for delay, value in curve.items()}
 
 
 def diagnostics(raw: np.ndarray, panel: Panel, rows: np.ndarray, horizons=(1, 2, 4, 8, 16, 32)) -> dict[str, Any]:
-    """What the data says about the strategy's prediction, on the pool rows of a segment:
-    the return that follows a position, by horizon (does the edge decay as stated?), and by the
-    size of the position (is a larger position followed by a larger move?)."""
+    """What the data says about the strategy's prediction, on the pool rows of a segment where a
+    position is held: the return that follows a position, by horizon (does the edge decay as
+    stated?), and how much the position explains the next bar's return -- its correlation, R²,
+    and the next return of each position quintile (is a larger position followed by a larger
+    move, monotonically?)."""
+    from phasor import predictions
+
     close = panel.fields["close"]
     held = np.nan_to_num(np.clip(raw, -1, 1)) * panel.pool
-    mask = rows[:, None] & (np.abs(held) > TOLERANCE)
-    found: dict[str, Any] = {"signed_forward_return_by_horizon": {}}
-    for horizon in horizons:
-        forward = np.full(close.shape, np.nan)
-        forward[:-horizon] = close[horizon:] / close[:-horizon] - 1
-        values = (np.sign(held) * forward)[mask]
-        values = values[np.isfinite(values)]
-        found["signed_forward_return_by_horizon"][str(horizon)] = float(values.mean()) if values.size else float("nan")
+    taken = rows[:, None] & (np.abs(held) > TOLERANCE)
+    decay = predictions.decay(np.where(taken, held, 0.0), close, horizons=tuple(horizons))
     forward = np.full(close.shape, np.nan)
-    forward[:-1] = close[1:] / close[:-1] - 1
-    sizes, nexts = held[mask], forward[mask]
-    keep = np.isfinite(nexts)
-    sizes, nexts = sizes[keep], nexts[keep]
-    if sizes.size >= 50:
-        edges = np.quantile(sizes, [0, 0.2, 0.4, 0.6, 0.8, 1])
-        buckets = np.clip(np.searchsorted(edges, sizes, side="right") - 1, 0, 4)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        forward[:-1] = close[1:] / close[:-1] - 1
+    found: dict[str, Any] = {"signed_forward_return_by_horizon": {str(h): value for h, value in decay.items()}}
+    if taken.sum() >= 50:
+        power = predictions.power(np.where(taken, held, np.nan), forward, quantiles=5)
+        found["next_return_correlation"] = power["correlation"]
+        found["r_squared"] = power["r_squared"]
+        levels = power.get("quantile_predictions", {})
         found["next_return_by_position_quintile"] = {
-            f"q{bucket + 1} ({edges[bucket]:+.2f}..{edges[bucket + 1]:+.2f})": float(nexts[buckets == bucket].mean())
-            for bucket in range(5)
-            if (buckets == bucket).any()
+            f"q{g} ({levels[g]:+.2f})" if g in levels else f"q{g}": value
+            for g, value in power["quantile_returns"].items()
         }
+        found["quintile_monotonicity"] = power["monotonicity"]
     return found
 
 
-# -- the whole evaluation ----------------------------------------------------------------------
+def cases(spec: FactorSpec) -> dict[str, dict[str, Any]]:
+    """The parameter values of each case label (``{}`` for a strategy without parameters)."""
+    if spec.mode != "expression" or not spec.params:
+        return {"default": {}}
+    import phasor
+
+    grid = phasor.FactorGrid.compile({"position": spec.expression}, **spec.params)
+    return {_label(case): dict(case) for case in grid.cases}
+
+
+def neighbourhood(spec: FactorSpec, found: dict[str, Any], selected: str) -> dict[str, Any]:
+    """The chosen case against its grid neighbours (one parameter one step away), on train and
+    valid: a peak with weak neighbours is a fit to noise more often than one on a plateau."""
+    from phasor.params import ParamResults, neighbors
+
+    labels = list(found)
+    combos = cases(spec)
+    if len(labels) < 2 or set(combos) != set(labels):
+        return {}
+    results = ParamResults(
+        [combos[label] for label in labels],
+        [
+            {segment: _float(found[label].get(segment, {}).get("sharpe")) for segment in ("train", "valid")}
+            for label in labels
+        ],
+    )
+    at = labels.index(selected)
+    out = {}
+    for segment in ("train", "valid"):
+        table = neighbors(results, key=segment)
+        if int(table["count"][at]) == 0:
+            continue
+        out[segment] = {
+            "sharpe": _float(table["value"][at]),
+            "neighbour_mean": _float(table["mean"][at]),
+            "neighbour_min": _float(table["min"][at]),
+            "ratio": _float(table["ratio"][at]),
+            "neighbours": int(table["count"][at]),
+        }
+    return out
+
+
+def bootstrap(run: Backtest, panel: Panel, rows: np.ndarray, n: int = 1000, seed: int = 0) -> dict[str, Any]:
+    """The segment's maximum drawdown and Sharpe over resampled paths (blocks of one day of bars):
+    the history is one ordering of its returns, and its drawdown one draw."""
+    from phasor import robust
+
+    block = max(1, round(panel.bars_per_year / 365))
+    found = robust.bootstrap(
+        run.returns[rows], n=n, block=block, seed=seed, ann_factor=panel.bars_per_year,
+        quantiles=(0.01, 0.05, 0.5, 0.95),
+    )  # fmt: skip
+    return {
+        name: {"observed": values["observed"], **{f"q{round(q * 100):02d}": v for q, v in values["quantiles"].items()}}
+        for name, values in found.items()
+    }
 
 
 @dataclass(frozen=True)
@@ -496,7 +595,10 @@ def evaluate(
     valid_returns = run.returns[rows["valid"]]
     robustness = {
         "valid_sharpe_delayed_one_more_bar": metrics(delayed, panel, rows["valid"]).get("sharpe"),
+        "valid_sharpe_by_extra_delay_before_funding": delay_curve(run, panel, rows["valid"]),
         "valid_sharpe_of_each_case": {label: cases[label]["valid"].get("sharpe") for label in cases},
+        "parameter_neighbourhood": neighbourhood(spec, cases, selected),
+        "bootstrap_train_and_valid": bootstrap(run, panel, seen),
         "permutation_p_value_train_and_valid": permutation_p_value(run, seen),
         "trials": len(trials),
         "valid_deflated_sharpe_probability": (

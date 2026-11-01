@@ -58,6 +58,16 @@ class CryptoStrategySettings(ExtendedBaseSettings):
     max_delay_loss: float = 0.5
     """Rejected when one more bar of delay loses more than this share of the valid Sharpe."""
 
+    min_neighbour_ratio: Optional[float] = None
+    """When set, rejected when the chosen case's grid neighbours average less than this share of its
+    train Sharpe (a peak rather than a plateau). Off by default: it is reported either way."""
+
+    max_correlation: float = 0.7
+    """A strategy whose valid returns correlate more than this with an accepted one is not new."""
+
+    min_portfolio_gain: float = 0.05
+    """A strategy is accepted only when adding it raises the book's valid Sharpe by at least this."""
+
     python_bin: str = "python"
     """The interpreter that runs a strategy (it needs rdagent and phasor)."""
 

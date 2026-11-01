@@ -197,6 +197,15 @@ def test_an_evaluation_reports_every_case_and_hides_nothing_until_asked():
     robustness = result["robustness"]
     assert robustness["trials"] == 4 and 0 <= robustness["permutation_p_value_train_and_valid"] <= 1
     assert set(result["diagnostics"]["valid"]["signed_forward_return_by_horizon"]) == {"1", "2", "4", "8", "16", "32"}
+    train = result["cases"]["n=3"]["train"]
+    assert train["trades"] > 0 and 0 <= train["trade_win_rate"] <= 1 and 0 <= train["hit_ratio"] <= 1
+    assert {"sortino", "calmar", "omega", "return_concentration", "max_drawdown_recovery_bars"} <= set(train)
+    assert set(robustness["valid_sharpe_by_extra_delay_before_funding"]) == {"0", "1", "2", "3"}
+    neighbourhood = robustness["parameter_neighbourhood"]
+    assert set(neighbourhood) == {"train", "valid"} and neighbourhood["train"]["neighbours"] == 1
+    drawdown = robustness["bootstrap_train_and_valid"]["max_drawdown"]
+    assert drawdown["q01"] <= drawdown["q05"] <= drawdown["q50"] <= 0
+    assert 0 <= result["diagnostics"]["valid"]["r_squared"] < 1
     hidden = without_test(result)
     text = json.dumps(hidden)
     assert '"test"' not in text and "test_diagnostics" not in text
@@ -225,3 +234,16 @@ def test_the_panel_loads_what_jarvis_history_writes(tmp_path):
     assert np.allclose(loaded.fields["close"], panel.fields["close"])
     assert loaded.bars_per_year == pytest.approx(365 * 6)
     assert math.isclose(loaded.head(4).fields["close"][-1, 0], panel.fields["close"][3, 0])
+
+
+def test_trade_stats_count_round_trips_closed_in_the_segment():
+    trades = {
+        "exit_idx": np.array([5, 15, 25, 40]),
+        "status": np.array([1, 1, 1, 0]),  # the last one is still open
+        "pnl": np.array([1.0, -0.5, 2.0, 3.0]),
+        "duration": np.array([4.0, 6.0, 10.0, 8.0]),
+    }
+    found = engine.trade_stats(trades, 10, 30)
+    assert found["trades"] == 2 and found["trade_win_rate"] == 0.5
+    assert found["profit_factor"] == pytest.approx(4.0)
+    assert found["mean_winning_trade_bars"] == 10 and found["mean_losing_trade_bars"] == 6

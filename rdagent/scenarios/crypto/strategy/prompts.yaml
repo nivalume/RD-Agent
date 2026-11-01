@@ -23,11 +23,15 @@ strategy_evaluation_setting: |-
     {{ settings.valid_end }}{% if hide_test %}; a later test period is kept out of everything shown to you{% endif %}.
   - Every parameter case is backtested; the one with the best train Sharpe is chosen, and the valid
     period judges it.
-  - A strategy is accepted only when its valid Sharpe is above {{ settings.min_valid_sharpe }}, one more bar
-    of delay keeps at least {{ "%.0f" % ((1 - settings.max_delay_loss) * 100) }}% of it, and a block-permutation test of its
-    train and valid returns gives a p-value of at most {{ settings.max_p_value }}. Among accepted strategies, the
-    best is the one with the highest valid alpha Sharpe: its returns after removing the beta to the
-    equal-weight market.
+  - Hard gates: the valid Sharpe is above {{ settings.min_valid_sharpe }}, one more bar of delay keeps at least
+    {{ "%.0f" % ((1 - settings.max_delay_loss) * 100) }}% of it, and a block-permutation test of its train and valid returns gives a
+    p-value of at most {{ settings.max_p_value }}{% if settings.min_neighbour_ratio is not none %}; the neighbouring parameter
+    cases keep at least {{ "%.0f" % (settings.min_neighbour_ratio * 100) }}% of the chosen case's train Sharpe{% endif %}.
+  - The accepted strategies form a book: each scaled to the same train volatility, equally weighted. A
+    strategy that passes the gates joins the book only when its valid returns correlate at most
+    {{ settings.max_correlation }} with every accepted strategy and adding it raises the book's valid Sharpe by
+    at least {{ settings.min_portfolio_gain }}; the first one joins on the gates alone. A good strategy that is
+    a copy of one already held adds nothing.
 
 strategy_feedback_system: |-
   You are a quantitative researcher reviewing a round of crypto strategy research.
@@ -40,14 +44,25 @@ strategy_feedback_system: |-
   robustness statistics, and diagnostics:
   - signed_forward_return_by_horizon: the mean return in the direction of the position, h bars after
     it is decided, before costs. It tests the stated prediction: its sign, its size and how it decays.
-  - next_return_by_position_quintile: the next bar's return by the size of the position.
+  - r_squared, next_return_correlation, next_return_by_position_quintile and quintile_monotonicity:
+    how much the position explains the next bar's return, and whether a larger position is followed by
+    a larger move (monotonicity 1). An R² of 0.01 is already a useful forecast of a return.
+  - valid_sharpe_by_extra_delay_before_funding: the valid Sharpe with the positions held 0 to 3 more
+    bars late. A Sharpe that grows with delay means the signal trades too early.
+  - parameter_neighbourhood: the chosen case against its neighbouring parameter values; a ratio well
+    below 1 is a peak that the data happened to favour, not a plateau.
+  - bootstrap_train_and_valid: the drawdown and Sharpe over resampled orderings of the same returns;
+    q01/q05 of max_drawdown is how bad the drawdown could have been.
+  - hit_ratio (bars that gained among bars that moved), trade_win_rate (round trips that gained) and
+    return_concentration (the share of gains from the best 5% of bars) say whether the result is many
+    small wins or a few large ones.
 
-  The decision is not yours: the hard gates and the comparison with the best strategy so far decide it,
-  and you are told the outcome. Your job is to explain it and point the next round:
+  The decision is not yours: the hard gates and what the strategy adds to the book decide it, and you
+  are told the outcome. Your job is to explain it and point the next round:
   - Judge the mechanism, not the luck: did the diagnostics show the predicted sign and decay? Is the
-    return explained by the market beta, by funding, or eaten by costs? Is it carried by one year or one
-    parameter case?
-  - When a strategy failed a gate, say what the failure means for the mechanism.
+    return explained by the market beta, by funding, or eaten by costs? Is it carried by one year, a few
+    bars or one parameter case?
+  - When a strategy failed a gate or was a copy of the book, say what that means for the mechanism.
   - Propose what the next round should test: a sharper version of the same mechanism, the condition
     under which it should hold, or a different mechanism when this one has failed twice.
 
@@ -73,14 +88,20 @@ strategy_feedback_user: |-
   {{ strategy.evaluation }}
   ## Hard gates
   {% if strategy.failures %}Failed: {{ strategy.failures | join("; ") }}{% else %}Passed.{% endif %}
+  {% if strategy.warnings %}Warnings: {{ strategy.warnings | join("; ") }}{% endif %}
+  {% if strategy.contribution %}
+  ## Against the book (valid)
+  {{ strategy.contribution }}
+  {% if strategy.not_new %}Not added: {{ strategy.not_new | join("; ") }}{% endif %}
+  {% endif %}
 
   {% endfor %}
   # Outcome
   {{ outcome }}
 
-  {% if sota %}
-  # The best strategy so far
-  {{ sota }}
+  {% if book %}
+  # The book so far
+  {{ book }}
   {% else %}
-  No earlier strategy has been accepted.
+  No strategy has been accepted yet: the book is empty.
   {% endif %}

@@ -25,21 +25,29 @@ pytestmark = pytest.mark.offline
 
 ROWS = 1200  # 200 days of 4h bars from 2024-01-01
 
+
 # Knows the move of the eight bars it will hold: the runner does not look for look-ahead (the coder
 # does), so here it stands for a strategy that passes every gate, one more bar of delay included.
-ORACLE = {
-    "mode": "python",
-    "code": (
-        "import numpy as np\n\n"
-        "def calculate(fields, index, symbols):\n"
-        "    close = fields['close']\n"
-        "    out = np.zeros_like(close)\n"
-        "    out[:-9] = np.sign(close[9:] / close[1:-8] - 1)\n"
-        "    return out\n"
-    ),
-    "fields": ["close"],
-    "reason": "fixture",
-}
+def _oracle(columns: str = ":") -> dict:
+    """Knows the move of the eight bars it will hold, on the given columns: the runner does not look
+    for look-ahead (the coder does), so here it stands for a strategy that passes every gate, one
+    more bar of delay included."""
+    return {
+        "mode": "python",
+        "code": (
+            "import numpy as np\n\n"
+            "def calculate(fields, index, symbols):\n"
+            "    close = fields['close']\n"
+            "    out = np.zeros_like(close)\n"
+            f"    out[:-9, {columns}] = np.sign(close[9:, {columns}] / close[1:-8, {columns}] - 1)\n"
+            "    return out\n"
+        ),
+        "fields": ["close"],
+        "reason": "fixture",
+    }
+
+
+ORACLE = _oracle()
 TREND = {
     "mode": "expression",
     "expression": "Sign(Mean($close, {n}) - Mean($close, 4*{n}))",
@@ -218,15 +226,41 @@ def test_the_feedback_accepts_the_best_and_never_shows_the_test_segment(ran, bac
     assert '"valid"' in call["user"] and "signed_forward_return_by_horizon" in call["user"]
 
 
-def test_a_strategy_that_does_not_beat_the_best_so_far_is_rejected(ran, panel, backend):
+def _accepted(exp, name):
+    exp.accepted_strategy = name
+    return exp, HypothesisFeedback(reason="", decision=True)
+
+
+def test_a_copy_of_an_accepted_strategy_is_not_added(ran, panel, backend):
     trace = Trace(scen=_Scenario())
-    trace.hist.append((ran, HypothesisFeedback(reason="", decision=True)))
+    trace.hist.append(_accepted(ran, "oracle"))
     again = StrategyRunner(_Scenario()).develop(_experiment(oracle=ORACLE))
     feedback = StrategyExperiment2Feedback(_Scenario()).generate_feedback(again, trace)
-    assert not feedback.decision and feedback.acceptable
+    assert not feedback.decision and feedback.acceptable and again.accepted_strategy is None
     user = backend.calls[-1]["user"]
-    assert "does not beat the best so far (oracle" in user
-    assert "The best strategy so far" in user and '"test"' not in user
+    assert "correlate 1.00 with an accepted strategy" in user
+    assert "passed the gates but add too little to the book" in user
+    assert "# The book so far" in user and '"test"' not in user
+
+
+def test_a_strategy_new_to_the_book_is_added(panel, backend):
+    first = StrategyRunner(_Scenario()).develop(_experiment(btc=_oracle("0")))
+    trace = Trace(scen=_Scenario())
+    trace.hist.append(_accepted(first, "btc"))
+    other = StrategyRunner(_Scenario()).develop(_experiment(sol=_oracle("2"), btc_again=_oracle("0")))
+    feedback = StrategyExperiment2Feedback(_Scenario()).generate_feedback(other, trace)
+    assert feedback.decision and other.accepted_strategy == "sol"
+    assert abs(other.judged["sol"]["contribution"]["max_abs_correlation"]) < 0.3
+    assert other.judged["sol"]["contribution"]["gain"] > 0.05
+    assert other.judged["btc_again"]["not_new"]
+    assert "Accepted: sol passed the gates and joins the book, raising its valid Sharpe" in backend.calls[-1]["user"]
+
+
+def test_the_runner_keeps_only_train_and_valid_returns(ran):
+    frame = ran.strategy_returns["oracle"]
+    assert set(frame["segment"].astype(str)) == {"train", "valid"}
+    assert frame.index.max() < pd.Timestamp("2024-06-01", tz="UTC")
+    assert frame["returns"].dtype == np.float32
 
 
 def test_nothing_passing_is_rejected_even_when_the_model_fails(ran, monkeypatch):
@@ -243,16 +277,25 @@ def test_nothing_passing_is_rejected_even_when_the_model_fails(ran, monkeypatch)
 # -- the report --------------------------------------------------------------------------------
 
 
-def test_the_report_shows_the_test_segment_with_a_deflated_sharpe(ran, tmp_path, capsys):
+def test_the_report_shows_the_test_segment_the_book_and_the_charts(ran, tmp_path, capsys):
+    pytest.importorskip("plotly")
     log = tmp_path / "log"
     storage = FileStorage(log)
+    ran.accepted_strategy = "oracle"
     storage.log(ran, tag="Loop_0.running.runner result.1")
     storage.log(HypothesisFeedback(reason="", decision=True), tag="Loop_0.feedback.feedback.1")
     assert report.main([str(log)]) == 0
     printed = capsys.readouterr().out
-    assert "test_deflated_sharpe" in printed and "| 0 | oracle |" in printed
-    found, trials = report.rows(log, CryptoStrategySettings(_env_file=None))
-    assert trials == 3
-    oracle = next(row for row in found if row["strategy"] == "oracle")
-    assert oracle["accepted_round"] and oracle["test_sharpe"] > 5
-    assert 0.9 < oracle["test_deflated_sharpe"] <= 1
+    assert "test_deflated_sharpe" in printed and "| 0 | oracle |" in printed and "Book (oracle)" in printed
+    found = report.collect(log, CryptoStrategySettings(_env_file=None))
+    assert found["trials"] == 3
+    oracle = next(row for row in found["rows"] if row["strategy"] == "oracle")
+    assert oracle["in_book"] and oracle["test_sharpe"] > 5 and 0.9 < oracle["test_deflated_sharpe"] <= 1
+    assert found["book"]["test_sharpe"] > 5
+    # Each member at the members' average risk: the book's returns are returns, not z-scores.
+    book = found["book"]["returns"].to_numpy()
+    assert np.abs(book).max() < 0.2 and np.isclose(
+        book.std(), ran.strategy_returns["oracle"]["returns"].std(), rtol=0.5
+    )
+    page = (log / "strategy_report.html").read_text()
+    assert page.count("plotly-graph-div") >= 4 and "Book: oracle" in page
