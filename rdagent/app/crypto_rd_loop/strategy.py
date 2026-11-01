@@ -6,11 +6,11 @@ One round:
 2. ``coding`` -- each strategy as a phasor expression or numpy code, checked on the debug panel
    (bounds, not flat, no look-ahead);
 3. ``running`` -- the backtest on the full panel: volatility targeting, costs, funding, train /
-   valid / test, robustness and diagnostics;
+   select / lockbox, robustness and diagnostics;
 4. ``feedback`` -- the hard gates and the best-so-far comparison decide; the model explains;
 5. ``record``.
 
-The test segment is never shown to the model (``CRYPTO_STRATEGY_HIDE_TEST``); read it with the
+The lockbox is never shown to the model (``CRYPTO_STRATEGY_HIDE_TEST``); read it with the
 report::
 
     jarvis-history panel --interval 4h --top 100 --out ~/jarvis-data/strategy/4h   # the data, once

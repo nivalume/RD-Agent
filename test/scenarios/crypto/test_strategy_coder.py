@@ -106,13 +106,16 @@ def panel_dir(tmp_path, monkeypatch):
     close = 100 * np.exp(np.cumsum(generator.normal(0, 0.01, size=(rows, columns)), axis=0))
     times = pd.date_range("2024-01-01", periods=rows, freq="4h", tz="UTC").rename("time")
     symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    debug = tmp_path / "panel" / "debug"
+    debug = tmp_path / "panel"
     debug.mkdir(parents=True)
     for name in engine.FIELDS:
         values = np.zeros_like(close) if name == "funding_rate" else close
         pd.DataFrame(values, index=times, columns=symbols).to_parquet(debug / f"{name}.parquet")
     pd.DataFrame(True, index=times, columns=symbols).to_parquet(debug / "pool.parquet")
     monkeypatch.setenv("CRYPTO_STRATEGY_PANEL_DIR", str(tmp_path / "panel"))
+    # The coder checks on the last 60 days of the fitting period, cut from the panel.
+    monkeypatch.setenv("CRYPTO_STRATEGY_TRAIN_END", "2024-03-15")
+    monkeypatch.setenv("CRYPTO_STRATEGY_DEBUG_DAYS", "60")
     monkeypatch.setenv("CRYPTO_STRATEGY_PYTHON_BIN", sys.executable)
     return debug
 
@@ -225,3 +228,22 @@ def test_a_failed_attempt_is_summarized_and_quoted(backend):
     assert '"expression": "$close"' in summary["system"]
     assert "critic 1: Clip the position." in implementation["user"]
     assert '"expression": "$close"' in implementation["user"]
+
+
+def test_the_debug_panel_is_cut_from_the_fitting_period(panel_dir, monkeypatch):
+    from rdagent.scenarios.crypto.strategy.conf import CryptoStrategySettings
+    from rdagent.scenarios.crypto.strategy.debug import debug_panel
+
+    monkeypatch.setenv("CRYPTO_STRATEGY_DEBUG_INSTRUMENTS", "2")
+    target = debug_panel(CryptoStrategySettings())
+    close = pd.read_parquet(target / "close.parquet")
+    assert close.index.max() <= pd.Timestamp("2024-03-16", tz="UTC")
+    assert close.index.min() > pd.Timestamp("2024-01-16", tz="UTC")
+    assert close.shape[1] == 2 and set(pd.read_parquet(target / "pool.parquet").columns) == set(close.columns)
+    written = (target / "close.parquet").stat().st_mtime_ns
+    assert debug_panel(CryptoStrategySettings()) == target
+    assert (target / "close.parquet").stat().st_mtime_ns == written  # reused while nothing changed
+    monkeypatch.setenv("CRYPTO_STRATEGY_TRAIN_END", "2024-02-15")
+    assert pd.read_parquet(debug_panel(CryptoStrategySettings()) / "close.parquet").index.max() <= pd.Timestamp(
+        "2024-02-16", tz="UTC"
+    )

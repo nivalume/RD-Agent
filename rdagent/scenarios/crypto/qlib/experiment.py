@@ -61,8 +61,9 @@ def _setting() -> str:
         train_end=settings.train_end,
         valid_start=settings.valid_start,
         valid_end=settings.valid_end,
-        test_start=settings.test_start,
-        test_end=settings.test_end,
+        test_start=settings.select_start,
+        test_end=settings.select_end,
+        lockbox_start=settings.lockbox_start,
     )
 
 
@@ -76,8 +77,9 @@ def _experiment_setting(model: str, factors: str) -> str:
         train_end=settings.train_end,
         valid_start=settings.valid_start,
         valid_end=settings.valid_end,
-        test_start=settings.test_start,
-        test_end=settings.test_end,
+        test_start=settings.select_start,
+        test_end=settings.select_end,
+        lockbox_start=settings.lockbox_start,
     )
 
 

@@ -15,8 +15,10 @@ crypto_qlib_setting: |-
     funding payments are not in them.
   - Metrics: IC and Rank IC of the predictions against the label (mean and IR across days), and the
     annualised return, information ratio and maximum drawdown of the backtest, annualised over 365 days.
-  - Segments: train {{ train_start }} to {{ train_end }}, valid {{ valid_start }} to {{ valid_end }},
-    test {{ test_start }} to {{ test_end or "the last day of the data" }}.
+  - Segments: train {{ train_start }} to {{ train_end }} (the model is fitted), valid {{ valid_start }} to
+    {{ valid_end }} (early stopping), test {{ test_start }} to {{ test_end }} (the IC and the backtest you are
+    shown, and what the best result so far is chosen on). The data after {{ lockbox_start }} is held back
+    and is never shown during the research.
   Because the cross-section moves with one common market factor, what predicts the label is the part of
   the return that differs between instruments on the same day: a factor helps when it ranks the
   instruments, not when it times the market.
@@ -88,4 +90,4 @@ crypto_qlib_model_simulator: |-
 crypto_qlib_experiment_setting: |-
   | Dataset 📊 | Model 🤖 | Factors 🌟 | Data Split 🧮 |
   |---------|----------|---------------|-------------------------------------------------|
-  | Binance USD-M USDT perpetuals, {{ market }} | {{ model }} | {{ factors }} | Train: {{ train_start }} to {{ train_end }} <br> Valid: {{ valid_start }} to {{ valid_end }} <br> Test &nbsp;: {{ test_start }} to {{ test_end or "latest" }} |
+  | Binance USD-M USDT perpetuals, {{ market }} | {{ model }} | {{ factors }} | Train: {{ train_start }} to {{ train_end }} <br> Valid: {{ valid_start }} to {{ valid_end }} <br> Test &nbsp;: {{ test_start }} to {{ test_end }} <br> (after {{ lockbox_start }}: held back) |

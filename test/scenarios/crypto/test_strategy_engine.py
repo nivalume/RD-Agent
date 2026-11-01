@@ -18,7 +18,7 @@ from rdagent.scenarios.crypto.strategy.engine import (
     check,
     evaluate,
     positions,
-    without_test,
+    without_lockbox,
 )
 
 FIELDS = list(engine.FIELDS)
@@ -192,24 +192,24 @@ def test_an_evaluation_reports_every_case_and_hides_nothing_until_asked():
     panel = random_panel(rows=600)
     result = evaluate(GRID, panel, SEGMENTS, BacktestSettings(vol_lookback=30), trial_sharpes=[0.01, 0.02])
     assert result["selected_case"] in {"n=3", "n=5"}
-    assert set(result["cases"]["n=3"]) == {"train", "valid", "test"}
+    assert set(result["cases"]["n=3"]) == {"train", "select", "lockbox"}
     assert result["cases"]["n=3"]["train"]["bars"] > 200
     robustness = result["robustness"]
-    assert robustness["trials"] == 4 and 0 <= robustness["permutation_p_value_train_and_valid"] <= 1
-    assert set(result["diagnostics"]["valid"]["signed_forward_return_by_horizon"]) == {"1", "2", "4", "8", "16", "32"}
+    assert robustness["trials"] == 4 and 0 <= robustness["permutation_p_value_train_and_select"] <= 1
+    assert set(result["diagnostics"]["select"]["signed_forward_return_by_horizon"]) == {"1", "2", "4", "8", "16", "32"}
     train = result["cases"]["n=3"]["train"]
     assert train["trades"] > 0 and 0 <= train["trade_win_rate"] <= 1 and 0 <= train["hit_ratio"] <= 1
     assert {"sortino", "calmar", "omega", "return_concentration", "max_drawdown_recovery_bars"} <= set(train)
-    assert set(robustness["valid_sharpe_by_extra_delay_before_funding"]) == {"0", "1", "2", "3"}
+    assert set(robustness["select_sharpe_by_extra_delay_before_funding"]) == {"0", "1", "2", "3"}
     neighbourhood = robustness["parameter_neighbourhood"]
-    assert set(neighbourhood) == {"train", "valid"} and neighbourhood["train"]["neighbours"] == 1
-    drawdown = robustness["bootstrap_train_and_valid"]["max_drawdown"]
+    assert set(neighbourhood) == {"train", "select"} and neighbourhood["train"]["neighbours"] == 1
+    drawdown = robustness["bootstrap_train_and_select"]["max_drawdown"]
     assert drawdown["q01"] <= drawdown["q05"] <= drawdown["q50"] <= 0
-    assert 0 <= result["diagnostics"]["valid"]["r_squared"] < 1
-    hidden = without_test(result)
+    assert 0 <= result["diagnostics"]["select"]["r_squared"] < 1
+    hidden = without_lockbox(result)
     text = json.dumps(hidden)
-    assert '"test"' not in text and "test_diagnostics" not in text
-    assert set(hidden["cases"]["n=3"]) == {"train", "valid"}
+    assert '"lockbox"' not in text and "lockbox_diagnostics" not in text
+    assert set(hidden["cases"]["n=3"]) == {"train", "select"}
 
 
 def test_a_strategy_that_knows_the_future_has_a_tiny_p_value():

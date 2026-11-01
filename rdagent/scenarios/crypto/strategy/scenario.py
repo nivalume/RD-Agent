@@ -45,7 +45,7 @@ class CryptoStrategyBacktestScenario(CryptoStrategyScenario):
             pool=pool,
         )
         self._evaluation = T(".prompts:strategy_evaluation_setting").r(
-            settings=self.settings, hide_test=self.settings.hide_test
+            settings=self.settings, hide_lockbox=self.settings.hide_lockbox
         )
 
     def get_source_data_desc(self, task: Task | None = None) -> str:  # noqa: ARG002

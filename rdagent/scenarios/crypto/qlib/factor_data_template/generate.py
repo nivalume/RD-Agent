@@ -1,7 +1,7 @@
 """Write the price-volume tables the factor coder reads, from the crypto qlib data directory.
 
 Run inside the qlib environment (docker or conda) with these variables, all optional:
-    crypto_provider_uri, crypto_market, debug_instruments, debug_start
+    crypto_provider_uri, crypto_market, debug_instruments, debug_start, debug_end
 """
 
 import os
@@ -30,10 +30,12 @@ data = data.loc[data.index.get_level_values("instrument").isin(members)]
 data = data.swaplevel().sort_index()
 data.to_hdf("./daily_pv_all.h5", key="data")
 
-# A small table the coder runs a factor on first: the most traded instruments of the pool.
-debug_start = os.environ.get("debug_start", "2024-01-01")
+# A small table the coder runs a factor on first: the most traded instruments of the pool, over a
+# year that ends with the fitting period, so nothing the coder reports comes from later data.
+debug_start = os.environ.get("debug_start", "2022-01-01")
+debug_end = os.environ.get("debug_end", "2022-12-31")
 size = int(os.environ.get("debug_instruments", "30"))
-recent = data.loc[debug_start:]
+recent = data.loc[debug_start:debug_end]
 traded = recent["$amount"].groupby(level="instrument").mean().sort_values(ascending=False)
 keep = traded.index[:size]
 debug = recent.loc[recent.index.get_level_values("instrument").isin(keep)]

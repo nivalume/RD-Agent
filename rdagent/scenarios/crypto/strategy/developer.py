@@ -2,9 +2,9 @@
 
 The runner backtests each coded strategy on the full panel, in a child process (python-mode code was
 written by the model). The feedback applies the hard gates, measures what each strategy that passed
-adds to the book of accepted strategies (its correlation with them and the book's valid Sharpe with
+adds to the book of accepted strategies (its correlation with them and the book's select Sharpe with
 it), accepts the one that adds most if it adds enough, and asks the model to explain the outcome.
-The model never sees the test segment while ``hide_test`` is on.
+The model never sees the lockbox while ``hide_lockbox`` is on.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from rdagent.oai.llm_utils import APIBackend
 from rdagent.scenarios.crypto.experiment.strategy_experiment import CryptoStrategyExperiment
 from rdagent.scenarios.crypto.strategy import results as R
 from rdagent.scenarios.crypto.strategy.conf import CryptoStrategySettings
-from rdagent.scenarios.crypto.strategy.engine import without_test
+from rdagent.scenarios.crypto.strategy.engine import without_lockbox
 from rdagent.scenarios.crypto.strategy.run import RETURNS_FILE, SPEC_FILE, run_in_process
 from rdagent.utils.agent.tpl import T
 
@@ -42,12 +42,12 @@ def _coded(exp: CryptoStrategyExperiment, index: int) -> bool:
 
 
 def seen_returns(path) -> pd.DataFrame | None:
-    """The train and valid rows of a backtest's returns file, as float32."""
+    """The train and select rows of a backtest's returns file, as float32."""
     try:
         frame = pd.read_parquet(path)
     except (OSError, ValueError):
         return None
-    frame = frame[frame["segment"].isin(["train", "valid"])]
+    frame = frame[frame["segment"].isin(["train", "select"])]
     return pd.DataFrame(
         {"returns": frame["returns"].astype(np.float32), "segment": frame["segment"].astype("category")},
         index=frame.index,
@@ -57,11 +57,11 @@ def seen_returns(path) -> pd.DataFrame | None:
 class StrategyRunner(Developer[CryptoStrategyExperiment]):
     """Backtest every strategy the coder wrote; the results go on the experiment:
 
-    - ``strategy_results``: name -> the whole evaluation, test segment included (for the report);
-    - ``result``: name -> its summary, without the test segment while ``hide_test`` is on (the trace
+    - ``strategy_results``: name -> the whole evaluation, lockbox included (for the report);
+    - ``result``: name -> its summary, without the lockbox while ``hide_lockbox`` is on (the trace
       prints it into every later prompt);
-    - ``trial_sharpes``: the per-bar valid Sharpe of every case, for later deflated Sharpes;
-    - ``strategy_returns``: name -> the chosen case's returns on the train and valid segments
+    - ``trial_sharpes``: the per-bar select Sharpe of every case, for later deflated Sharpes;
+    - ``strategy_returns``: name -> the chosen case's returns on the train and select segments
       (``returns``, ``segment``), what the book is built from. Test bars are not kept here.
 
     ``exp.prior_trial_sharpes``, set by the loop from the whole trace, are the earlier trials.
@@ -140,7 +140,7 @@ class StrategyExperiment2Feedback(Experiment2Feedback):
         settings = self.settings or CryptoStrategySettings()
         if not result.get("ok"):
             return result
-        visible = without_test(result) if settings.hide_test else result
+        visible = without_lockbox(result) if settings.hide_lockbox else result
         return _rounded({key: value for key, value in visible.items() if key not in ("ok", "seconds")})
 
     def judge(self, exp: CryptoStrategyExperiment, trace: Trace) -> dict[str, Any]:
@@ -190,7 +190,7 @@ class StrategyExperiment2Feedback(Experiment2Feedback):
         if accepted is not None:
             gain = verdict["strategies"][accepted]["contribution"].get("gain")
             outcome = f"Accepted: {accepted} passed the gates and joins the book" + (
-                f", raising its valid Sharpe by {gain:+.2f}." if book else " as its first strategy."
+                f", raising its select Sharpe by {gain:+.2f}." if book else " as its first strategy."
             )
         elif passed:
             outcome = f"Rejected: {', '.join(passed)} passed the gates but add too little to the book."
@@ -202,10 +202,10 @@ class StrategyExperiment2Feedback(Experiment2Feedback):
             for member, name in book:
                 task = next((task for task in member.sub_tasks if task.strategy_name == name), None)
                 summary = R.summary(member.strategy_results[name], settings)
-                valid = summary.get("valid", {})
+                select = summary.get("select", {})
                 lines.append(
-                    f"- {name}: {task.description if task is not None else ''} (valid Sharpe {valid.get('sharpe')}, "
-                    f"alpha Sharpe {valid.get('alpha_sharpe')})"
+                    f"- {name}: {task.description if task is not None else ''} (select Sharpe {select.get('sharpe')}, "
+                    f"alpha Sharpe {select.get('alpha_sharpe')})"
                 )
             book_text = "\n".join(lines)
         system = T(".prompts:strategy_feedback_system").r(scenario=self.scen.get_scenario_all_desc())

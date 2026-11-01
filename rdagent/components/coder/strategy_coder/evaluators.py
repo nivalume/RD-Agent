@@ -15,6 +15,7 @@ from rdagent.components.coder.strategy_coder.config import (
 )
 from rdagent.core.experiment import Task, Workspace
 from rdagent.scenarios.crypto.strategy.conf import CryptoStrategySettings
+from rdagent.scenarios.crypto.strategy.debug import debug_panel
 from rdagent.scenarios.crypto.strategy.run import SPEC_FILE, run_in_process
 
 
@@ -46,10 +47,14 @@ class StrategyEvaluatorForCoder(CoSTEEREvaluator):
         except FactorSpecError as error:
             return self._fail(str(error))
         strategy = CryptoStrategySettings()
+        try:
+            panel = debug_panel(strategy)
+        except (OSError, ValueError) as error:
+            return self._fail(f"The debug panel could not be prepared: {error}")
         result = run_in_process(
             "check",
             implementation.workspace_path,
-            strategy.debug_panel_path,
+            panel,
             strategy.python_bin,
             self.settings.check_timeout,
         )

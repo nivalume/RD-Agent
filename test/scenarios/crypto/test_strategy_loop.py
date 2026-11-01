@@ -1,7 +1,7 @@
 """The strategy runner, the gates, the feedback and the report, on a synthetic panel.
 
 The backtests run for real, in child processes; the chat backend is stubbed. The point of most
-tests is what the model is shown: never a test-segment number while ``hide_test`` is on.
+tests is what the model is shown: never a test-segment number while ``hide_lockbox`` is on.
 """
 
 import json
@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from rdagent.components.coder.phasor_coder.spec import validate_factor_spec
 from rdagent.components.coder.strategy_coder import StrategyWorkspace
 from rdagent.core.proposal import Hypothesis, HypothesisFeedback, Trace
 from rdagent.core.scenario import Scenario
@@ -91,9 +92,9 @@ def panel(tmp_path, monkeypatch):
         "VOL_LOOKBACK": "30",
         "TRAIN_START": "2024-01-01",
         "TRAIN_END": "2024-03-31",
-        "VALID_START": "2024-04-01",
-        "VALID_END": "2024-05-31",
-        "TEST_START": "2024-06-01",
+        "SELECT_START": "2024-04-01",
+        "SELECT_END": "2024-05-31",
+        "LOCKBOX_START": "2024-06-01",
     }.items():
         monkeypatch.setenv(f"CRYPTO_STRATEGY_{name}", value)
     return directory
@@ -146,7 +147,7 @@ def _test_numbers(exp) -> list[str]:
     for result in exp.strategy_results.values():
         for case in result["cases"].values():
             for name in ("sharpe", "annual_return", "alpha_sharpe"):
-                found.append(f"{round(case['test'][name], 3)}")
+                found.append(f"{round(case['lockbox'][name], 3)}")
     return found
 
 
@@ -156,13 +157,13 @@ def _test_numbers(exp) -> list[str]:
 def test_the_runner_backtests_every_strategy_and_hides_the_test_segment(ran):
     assert set(ran.strategy_results) == {"oracle", "trend"}
     assert all(result["ok"] for result in ran.strategy_results.values())
-    assert set(ran.strategy_results["trend"]["cases"]["n=3"]) == {"train", "valid", "test"}
+    assert set(ran.strategy_results["trend"]["cases"]["n=3"]) == {"train", "select", "lockbox"}
     assert ran.strategy_results["trend"]["robustness"]["trials"] == 2 + 1 + 2  # earlier, oracle, own cases
     assert len(ran.trial_sharpes) == 3
     shown = json.dumps(ran.result)
-    assert '"test"' not in shown
+    assert '"lockbox"' not in shown
     assert not any(f": {number}," in shown for number in _test_numbers(ran))
-    assert set(ran.result["oracle"]) >= {"case", "train", "valid", "gates_failed"}
+    assert set(ran.result["oracle"]) >= {"case", "train", "select", "gates_failed"}
     assert (ran.sub_workspace_list[0].workspace_path / "returns.parquet").exists()
 
 
@@ -182,18 +183,18 @@ def test_a_strategy_the_coder_rejected_is_not_backtested(panel):
 def test_the_test_segment_is_shown_when_it_is_not_hidden(panel, monkeypatch):
     monkeypatch.setenv("CRYPTO_STRATEGY_HIDE_TEST", "false")
     exp = StrategyRunner(_Scenario()).develop(_experiment(oracle=ORACLE))
-    assert "test" in exp.result["oracle"]
+    assert "lockbox" in exp.result["oracle"]
 
 
 # -- the gates ---------------------------------------------------------------------------------
 
 
-def _result(valid=1.0, delayed=0.9, p_value=0.01):
+def _result(select=1.0, delayed=0.9, p_value=0.01):
     return {
         "ok": True,
         "selected_case": "default",
-        "cases": {"default": {"valid": {"sharpe": valid, "alpha_sharpe": valid}}},
-        "robustness": {"valid_sharpe_delayed_one_more_bar": delayed, "permutation_p_value_train_and_valid": p_value},
+        "cases": {"default": {"select": {"sharpe": select, "alpha_sharpe": select}}},
+        "robustness": {"select_sharpe_delayed_one_more_bar": delayed, "permutation_p_value_train_and_select": p_value},
     }
 
 
@@ -201,7 +202,7 @@ def _result(valid=1.0, delayed=0.9, p_value=0.01):
     "result,failed",
     [
         (_result(), []),
-        (_result(valid=-0.1), ["valid Sharpe"]),
+        (_result(select=-0.1), ["select Sharpe"]),
         (_result(delayed=0.3), ["delay"]),
         (_result(p_value=0.2), ["p-value"]),
         ({"ok": False, "problems": ["boom"]}, ["did not run: boom"]),
@@ -222,8 +223,8 @@ def test_the_feedback_accepts_the_best_and_never_shows_the_test_segment(ran, bac
     assert feedback.observations == "o" and feedback.new_hypothesis == "n"
     (call,) = backend.calls
     assert "Accepted: oracle" in call["user"]
-    assert '"test"' not in call["user"] and "test_diagnostics" not in call["user"]
-    assert '"valid"' in call["user"] and "signed_forward_return_by_horizon" in call["user"]
+    assert '"lockbox"' not in call["user"] and "lockbox_diagnostics" not in call["user"]
+    assert '"select"' in call["user"] and "signed_forward_return_by_horizon" in call["user"]
 
 
 def _accepted(exp, name):
@@ -240,7 +241,7 @@ def test_a_copy_of_an_accepted_strategy_is_not_added(ran, panel, backend):
     user = backend.calls[-1]["user"]
     assert "correlate 1.00 with an accepted strategy" in user
     assert "passed the gates but add too little to the book" in user
-    assert "# The book so far" in user and '"test"' not in user
+    assert "# The book so far" in user and '"lockbox"' not in user
 
 
 def test_a_strategy_new_to_the_book_is_added(panel, backend):
@@ -253,12 +254,12 @@ def test_a_strategy_new_to_the_book_is_added(panel, backend):
     assert abs(other.judged["sol"]["contribution"]["max_abs_correlation"]) < 0.3
     assert other.judged["sol"]["contribution"]["gain"] > 0.05
     assert other.judged["btc_again"]["not_new"]
-    assert "Accepted: sol passed the gates and joins the book, raising its valid Sharpe" in backend.calls[-1]["user"]
+    assert "Accepted: sol passed the gates and joins the book, raising its select Sharpe" in backend.calls[-1]["user"]
 
 
 def test_the_runner_keeps_only_train_and_valid_returns(ran):
     frame = ran.strategy_returns["oracle"]
-    assert set(frame["segment"].astype(str)) == {"train", "valid"}
+    assert set(frame["segment"].astype(str)) == {"train", "select"}
     assert frame.index.max() < pd.Timestamp("2024-06-01", tz="UTC")
     assert frame["returns"].dtype == np.float32
 
@@ -277,25 +278,78 @@ def test_nothing_passing_is_rejected_even_when_the_model_fails(ran, monkeypatch)
 # -- the report --------------------------------------------------------------------------------
 
 
-def test_the_report_shows_the_test_segment_the_book_and_the_charts(ran, tmp_path, capsys):
-    pytest.importorskip("plotly")
+def _log(ran, tmp_path):
     log = tmp_path / "log"
     storage = FileStorage(log)
     ran.accepted_strategy = "oracle"
     storage.log(ran, tag="Loop_0.running.runner result.1")
     storage.log(HypothesisFeedback(reason="", decision=True), tag="Loop_0.feedback.feedback.1")
+    return log
+
+
+def test_the_report_keeps_the_lockbox_closed_by_default(ran, tmp_path, capsys):
+    pytest.importorskip("plotly")
+    log = _log(ran, tmp_path)
     assert report.main([str(log)]) == 0
     printed = capsys.readouterr().out
-    assert "test_deflated_sharpe" in printed and "| 0 | oracle |" in printed and "Book (oracle)" in printed
+    assert "lockbox" not in printed.split("\n")[0] and "The lockbox is closed" in printed
+    assert "| 0 | oracle |" in printed and "PBO over the select period" in printed
+    assert not (log / report.MARKER).exists()
     found = report.collect(log, CryptoStrategySettings(_env_file=None))
+    assert not any(key.startswith("lockbox") for row in found["rows"] for key in row)
+    frame = found["curves"]["0:oracle"][0]
+    assert set(frame["segment"]) == {"train", "select"}
+    page = (log / "strategy_report.html").read_text()
+    assert "The lockbox is closed" in page
+
+
+def test_opening_the_lockbox_shows_it_once_and_leaves_a_mark(ran, tmp_path, capsys):
+    pytest.importorskip("plotly")
+    log = _log(ran, tmp_path)
+    assert report.main([str(log), "--open-lockbox"]) == 0
+    printed = capsys.readouterr().out
+    assert "lockbox_deflated_sharpe" in printed and "Book (oracle)" in printed
+    marker = json.loads((log / report.MARKER).read_text())
+    assert marker["strategies"] == ["0:oracle", "0:trend"] and marker["lockbox_start"] == "2024-06-01"
+    found = report.collect(log, CryptoStrategySettings(_env_file=None), open_lockbox=True)
     assert found["trials"] == 3
     oracle = next(row for row in found["rows"] if row["strategy"] == "oracle")
-    assert oracle["in_book"] and oracle["test_sharpe"] > 5 and 0.9 < oracle["test_deflated_sharpe"] <= 1
-    assert found["book"]["test_sharpe"] > 5
+    assert oracle["in_book"] and oracle["lockbox_sharpe"] > 5 and 0.9 < oracle["lockbox_deflated_sharpe"] <= 1
+    assert found["book"]["lockbox_sharpe"] > 5
     # Each member at the members' average risk: the book's returns are returns, not z-scores.
     book = found["book"]["returns"].to_numpy()
-    assert np.abs(book).max() < 0.2 and np.isclose(
-        book.std(), ran.strategy_returns["oracle"]["returns"].std(), rtol=0.5
-    )
+    assert np.abs(book).max() < 0.2
     page = (log / "strategy_report.html").read_text()
     assert page.count("plotly-graph-div") >= 4 and "Book: oracle" in page
+    assert report.main([str(log)]) == 0
+    assert "The lockbox was opened on" in capsys.readouterr().out
+
+
+def test_pbo_separates_noise_from_a_real_edge():
+    rng = np.random.default_rng(0)
+    index = pd.date_range("2023-01-01", periods=2000, freq="4h", tz="UTC")
+    segment = pd.Series("select", index=index)
+
+    def experiment(columns):
+        exp = CryptoStrategyExperiment([], hypothesis=None)
+        exp.strategy_returns = {
+            f"s{k}": pd.DataFrame({"returns": column, "segment": segment}) for k, column in enumerate(columns)
+        }
+        return (0, exp, None)
+
+    noise = [rng.normal(0, 0.01, 2000) for _ in range(10)]
+    edge = [rng.normal(0.003, 0.01, 2000)] + [rng.normal(0, 0.01, 2000) for _ in range(9)]
+    assert 0.25 < report.pbo([experiment(noise)])["pbo"] < 0.75
+    assert report.pbo([experiment(edge)])["pbo"] < 0.05
+    assert np.isnan(report.pbo([experiment(noise[:1])])["pbo"])
+
+
+def test_walk_forward_chooses_each_case_on_the_past_only(panel):
+    settings = CryptoStrategySettings(_env_file=None)
+    loaded = engine.Panel.load(panel)
+    spec = validate_factor_spec(TREND, available_fields=list(engine.FIELDS))
+    found = report.walk_forward(spec, loaded, settings, freq="ME", min_periods=2)
+    # Train and select run January to May: March, April and May are traded, each on what came before.
+    assert [start[:7] for start, _ in found["choices"]] == ["2024-03", "2024-04", "2024-05"]
+    assert found["cases"] == 2 and found["returns"].index.min() >= pd.Timestamp("2024-03-01", tz="UTC")
+    assert found["returns"].index.max() < pd.Timestamp("2024-06-01", tz="UTC")

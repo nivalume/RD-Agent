@@ -39,7 +39,8 @@ python -m rdagent.scenarios.crypto.qlib.experiment factor     # 只打印场景 
 ```
 
 第一次运行时，会在 qlib 环境里执行 `factor_data_template/generate.py`，把因子代码读的 `daily_pv.h5`
-写到 `git_ignore_folder/crypto_factor_source_data`（以及 30 个标的的 debug 版）。数据更新后删掉这两个目录即可重新生成。
+写到 `git_ignore_folder/crypto_factor_source_data`（以及 30 个标的的 debug 版，取训练段最后一年）。数据更新后删掉这两个目录即可重新生成；
+debug 版的区间设置变了会自动重写。
 
 ## 评估设定（默认）
 
@@ -49,7 +50,7 @@ python -m rdagent.scenarios.crypto.qlib.experiment factor     # 只打印场景 
 | 标签 | `Ref($close, -2) / Ref($close, -1) - 1`，按日横截面标准化 |
 | 模型 | LightGBM，Alpha20 基础特征 + 挖出的因子 |
 | 回测 | 每日持有预测最高的 20 个、每天最多换 4 个、只做多、收盘成交、双边 0.05%、基准 BTCUSDT |
-| 分段 | 训练 2021-01-01–2023-06-30，验证 2023-07-01–2024-06-30，测试 2024-07-01–数据最后一天的前一天 |
+| 分段 | 训练 2021-01-01–2022-12-31（拟合、标准化），验证 2023-01-01–2023-06-30（early stopping），选择 2023-07-01–2024-06-30（qlib 的 test 段：反馈、SOTA 都看它），锁箱 2024-07-01–数据最后一天的前一天；训练、验证、选择段各在结尾少 2 天（标签读后两天的收盘） |
 
 回测收益只算价格收益，不含资金费率。
 
@@ -65,3 +66,20 @@ python -m rdagent.scenarios.crypto.qlib.experiment factor     # 只打印场景 
 | `rdagent/app/crypto_rd_loop/qlib.py`、`qlib_conf.py` | 三个循环的入口和配置 |
 
 对上游 qlib 代码只有一处改动：`QlibFBWorkspace.qlib_env()`，让场景可以换掉运行环境（docker 模式下不再下载 CN 数据）。
+
+## 样本内外
+
+循环里每个 workflow 的 qlib `test` 段都是选择段，数据也只加载到选择段结束；LLM 看到的 IC、回测和 SOTA 比较都来自选择段。
+选择段被反复用来挑选，多轮之后它也是样本内。研究结束后：
+
+```bash
+python -m rdagent.scenarios.crypto.qlib.lockbox log/<session>                  # 每轮一个试验：PBO
+python -m rdagent.scenarios.crypto.qlib.lockbox log/<session> --rolling        # 最终 SOTA 的扩展窗口 walk-forward
+python -m rdagent.scenarios.crypto.qlib.lockbox log/<session> --open-lockbox   # 最终 SOTA 在锁箱上跑一次
+```
+
+- PBO：各轮选择段每日超额收益（含成本）做 CSCV。
+- `--rolling`：在 SOTA 工作区的副本里，每季度用此前全部数据（最后 180 天做 early stopping）重新训练，拼出一条
+  从未见过所预测季度的预测，给出 IC、ICIR、rank IC 和 top-k 超额收益；只在训练到选择段内。
+- `--open-lockbox`：在副本里把 qlib 的 test 段换成锁箱再跑一次，Sharpe 按全部轮次做 deflated；写 `lockbox_opened.json`，
+  之后再选出的模型在锁箱上已不是样本外。

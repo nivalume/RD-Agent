@@ -498,7 +498,7 @@ def cases(spec: FactorSpec) -> dict[str, dict[str, Any]]:
 
 def neighbourhood(spec: FactorSpec, found: dict[str, Any], selected: str) -> dict[str, Any]:
     """The chosen case against its grid neighbours (one parameter one step away), on train and
-    valid: a peak with weak neighbours is a fit to noise more often than one on a plateau."""
+    select: a peak with weak neighbours is a fit to noise more often than one on a plateau."""
     from phasor.params import ParamResults, neighbors
 
     labels = list(found)
@@ -508,13 +508,13 @@ def neighbourhood(spec: FactorSpec, found: dict[str, Any], selected: str) -> dic
     results = ParamResults(
         [combos[label] for label in labels],
         [
-            {segment: _float(found[label].get(segment, {}).get("sharpe")) for segment in ("train", "valid")}
+            {segment: _float(found[label].get(segment, {}).get("sharpe")) for segment in ("train", "select")}
             for label in labels
         ],
     )
     at = labels.index(selected)
     out = {}
-    for segment in ("train", "valid"):
+    for segment in ("train", "select"):
         table = neighbors(results, key=segment)
         if int(table["count"][at]) == 0:
             continue
@@ -547,8 +547,8 @@ def bootstrap(run: Backtest, panel: Panel, rows: np.ndarray, n: int = 1000, seed
 @dataclass(frozen=True)
 class Segments:
     train: tuple[str, str]
-    valid: tuple[str, str]
-    test: tuple[str, str | None]
+    select: tuple[str, str]
+    lockbox: tuple[str, str | None]
 
     def rows(self, panel: Panel) -> dict[str, np.ndarray]:
         times = pd.to_datetime(panel.index, unit="ns", utc=True)
@@ -570,17 +570,17 @@ def evaluate(
     returns_out: Path | None = None,
 ) -> dict[str, Any]:
     """Every case on every segment; the case chosen on the train segment, with its robustness
-    statistics and diagnostics on train and valid. Test numbers are only under ``test``.
+    statistics and diagnostics on train and select. Lockbox numbers are only under ``lockbox``.
 
-    ``trial_sharpes`` are the per-bar valid Sharpe ratios of the earlier trials. With
+    ``trial_sharpes`` are the per-bar select Sharpe ratios of the earlier trials. With
     ``returns_out``, the chosen case's returns are written there as Parquet (``time``, ``returns``,
-    ``segment``), for a report that deflates the test Sharpe by every trial."""
+    ``segment``), for a report that deflates the lockbox Sharpe by every trial."""
     import phasor
 
     started = time.perf_counter()
     found = positions(spec, panel)
     rows = segments.rows(panel)
-    seen = rows["train"] | rows["valid"]
+    seen = rows["train"] | rows["select"]
     cases: dict[str, Any] = {}
     runs: dict[str, Backtest] = {}
     for label, raw in found.items():
@@ -590,26 +590,26 @@ def evaluate(
     selected = max(cases, key=lambda label: _finite(cases[label]["train"].get("sharpe")))
     run, raw = runs[selected], found[selected]
     delayed = backtest(raw, panel, BacktestSettings(**{**asdict(settings), "delay": settings.delay + 1}))
-    per_bar = [_finite(cases[label]["valid"].get("sharpe")) / math.sqrt(panel.bars_per_year) for label in cases]
+    per_bar = [_finite(cases[label]["select"].get("sharpe")) / math.sqrt(panel.bars_per_year) for label in cases]
     trials = [*(trial_sharpes or []), *per_bar]
-    valid_returns = run.returns[rows["valid"]]
+    select_returns = run.returns[rows["select"]]
     robustness = {
-        "valid_sharpe_delayed_one_more_bar": metrics(delayed, panel, rows["valid"]).get("sharpe"),
-        "valid_sharpe_by_extra_delay_before_funding": delay_curve(run, panel, rows["valid"]),
-        "valid_sharpe_of_each_case": {label: cases[label]["valid"].get("sharpe") for label in cases},
+        "select_sharpe_delayed_one_more_bar": metrics(delayed, panel, rows["select"]).get("sharpe"),
+        "select_sharpe_by_extra_delay_before_funding": delay_curve(run, panel, rows["select"]),
+        "select_sharpe_of_each_case": {label: cases[label]["select"].get("sharpe") for label in cases},
         "parameter_neighbourhood": neighbourhood(spec, cases, selected),
-        "bootstrap_train_and_valid": bootstrap(run, panel, seen),
-        "permutation_p_value_train_and_valid": permutation_p_value(run, seen),
+        "bootstrap_train_and_select": bootstrap(run, panel, seen),
+        "permutation_p_value_train_and_select": permutation_p_value(run, seen),
         "trials": len(trials),
-        "valid_deflated_sharpe_probability": (
-            float(phasor.robust.deflated_sharpe(valid_returns, np.array(trials)))
-            if len(trials) >= 2 and valid_returns.size > 2
+        "select_deflated_sharpe_probability": (
+            float(phasor.robust.deflated_sharpe(select_returns, np.array(trials)))
+            if len(trials) >= 2 and select_returns.size > 2
             else float("nan")
         ),
     }
     if returns_out is not None:
         segment = np.full(len(panel.index), "", dtype=object)
-        for name in ("train", "valid", "test"):
+        for name in ("train", "select", "lockbox"):
             segment[rows[name]] = name
         pd.DataFrame(
             {"returns": run.returns, "segment": segment},
@@ -620,8 +620,8 @@ def evaluate(
         "bars_per_year": panel.bars_per_year,
         "cases": cases,
         "robustness": robustness,
-        "diagnostics": {name: diagnostics(raw, panel, rows[name]) for name in ("train", "valid")},
-        "test_diagnostics": diagnostics(raw, panel, rows["test"]),
+        "diagnostics": {name: diagnostics(raw, panel, rows[name]) for name in ("train", "select")},
+        "lockbox_diagnostics": diagnostics(raw, panel, rows["lockbox"]),
         "seconds": round(time.perf_counter() - started, 2),
     }
 
@@ -634,10 +634,10 @@ def _finite(value: Any) -> float:
     return number if math.isfinite(number) else float("-inf")
 
 
-def without_test(result: dict[str, Any]) -> dict[str, Any]:
-    """The evaluation with every test-segment number removed: what the model may see."""
+def without_lockbox(result: dict[str, Any]) -> dict[str, Any]:
+    """The evaluation with every lockbox number removed: what the model may see."""
     hidden = json.loads(json.dumps(result, default=float))
     for case in hidden.get("cases", {}).values():
-        case.pop("test", None)
-    hidden.pop("test_diagnostics", None)
+        case.pop("lockbox", None)
+    hidden.pop("lockbox_diagnostics", None)
     return hidden
