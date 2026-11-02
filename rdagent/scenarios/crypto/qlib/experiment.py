@@ -407,10 +407,10 @@ class CryptoQlibQuantScenario(Scenario):
         )
 
 
-# The qlib feedback and the qlib model proposal, which the quant loop reuses, choose their quant
-# prompts with `isinstance(scen, QlibQuantScenario)` (scenarios/qlib/developer/feedback.py,
-# scenarios/qlib/proposal/model_proposal.py): the model feedback of a quant round would otherwise get
-# the factor feedback prompt, whose answer has no "Decision", and no model would ever become SOTA.
+# The qlib feedback, which the loops reuse, chooses its quant prompts with
+# `isinstance(scen, QlibQuantScenario)` (scenarios/qlib/developer/feedback.py): the model feedback of a
+# quant round would otherwise get the factor feedback prompt, whose answer has no "Decision", and no
+# model would ever become SOTA.
 # Registering declares that this class offers the quant interface -- background(tag),
 # get_scenario_all_desc(action=...) -- without inheriting any of the qlib scenario's code.
 QlibQuantScenario.register(CryptoQlibQuantScenario)

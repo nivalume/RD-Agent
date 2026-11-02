@@ -12,8 +12,9 @@ pointed at a crypto data directory instead of the CN one:
   setting (pool, label, costs, backtest) with ``prompts.yaml`` here;
 * the workflow configs under ``factor_template`` and ``model_template`` are the qlib ones with a 24/7
   calendar, no price limits, fractional sizes, perpetual fees and annualisation over 365 days;
-* :class:`~rdagent.scenarios.crypto.qlib.workspace.CryptoQlibFBWorkspace` runs them in docker or conda,
-  as ``MODEL_CoSTEER_ENV_TYPE`` says, with the settings of :mod:`rdagent.scenarios.crypto.qlib.conf`.
+* the package's own :class:`~rdagent.scenarios.crypto.qlib.workspace.CryptoQlibFBWorkspace` runs them
+  in docker or conda, as ``MODEL_CoSTEER_ENV_TYPE`` says, with the settings of
+  :mod:`rdagent.scenarios.crypto.qlib.conf`.
 
 Start a loop with ``python -m rdagent.app.crypto_rd_loop.qlib factor`` (or ``model``, ``quant``).
 """
