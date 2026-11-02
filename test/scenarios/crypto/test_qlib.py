@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -16,7 +17,9 @@ from rdagent.app.crypto_rd_loop.qlib_conf import (
 )
 from rdagent.components.coder.factor_coder.config import FACTOR_COSTEER_SETTINGS
 from rdagent.components.coder.model_coder.conf import MODEL_COSTEER_SETTINGS
+from rdagent.components.coder.model_coder.model import ModelTask
 from rdagent.core.proposal import Hypothesis, Trace
+from rdagent.core.scenario import Scenario
 from rdagent.scenarios.crypto.qlib import conf as crypto_conf
 from rdagent.scenarios.crypto.qlib import experiment as crypto_experiment
 from rdagent.scenarios.crypto.qlib import workspace as crypto_workspace
@@ -40,7 +43,15 @@ from rdagent.scenarios.crypto.qlib.workspace import (
     CryptoQTDockerEnv,
     require_data,
 )
+from rdagent.scenarios.qlib.developer import feedback as qlib_feedback
+from rdagent.scenarios.qlib.experiment.factor_experiment import QlibFactorScenario
+from rdagent.scenarios.qlib.experiment.model_experiment import QlibModelScenario
+from rdagent.scenarios.qlib.experiment.quant_experiment import QlibQuantScenario
 from rdagent.scenarios.qlib.experiment.workspace import QlibFBWorkspace
+from rdagent.scenarios.qlib.proposal.model_proposal import (
+    QlibModelHypothesis2Experiment,
+)
+from rdagent.utils.agent.tpl import T
 from rdagent.utils.env import QlibCondaEnv
 
 CONFIGS = sorted([*FACTOR_TEMPLATE.glob("*.yaml"), *MODEL_TEMPLATE.glob("*.yaml")])
@@ -243,6 +254,91 @@ def test_the_model_and_quant_scenarios(factor_tables):
     assert "develop new models" in quant.background("model")
     assert "the `top100` pool" in quant.simulator("model")
     assert "Binance USD-M USDT perpetuals" in quant.experiment_setting
+
+
+def test_the_scenarios_are_crypto_ones_on_the_qlib_templates(factor_tables):
+    for cls, qlib_cls in (
+        (CryptoQlibFactorScenario, QlibFactorScenario),
+        (CryptoQlibModelScenario, QlibModelScenario),
+        (CryptoQlibQuantScenario, QlibQuantScenario),
+    ):
+        assert issubclass(cls, Scenario) and qlib_cls not in cls.__mro__
+    qlib = "scenarios.qlib.experiment.prompts"
+    factor, model, quant = CryptoQlibFactorScenario(), CryptoQlibModelScenario(), CryptoQlibQuantScenario()
+    # The market-free templates are the qlib ones ...
+    assert factor.interface == T(f"{qlib}:qlib_factor_interface").r()
+    assert model.interface == T(f"{qlib}:qlib_model_interface").r()
+    assert model.output_format == T(f"{qlib}:qlib_model_output_format").r()
+    assert quant.interface("model").endswith(T(f"{qlib}:qlib_model_interface").r())
+    # ... the example of a factor's output is the crypto one.
+    assert "BTCUSDT" in factor.output_format and "SH600000" not in factor.output_format
+    assert "BTCUSDT" in quant.output_format("factor")
+    assert "result.h5" in factor.get_scenario_all_desc()
+
+
+def test_the_quant_scenario_answers_every_tag(factor_tables):
+    quant = CryptoQlibQuantScenario()
+    # The model coder's evaluators ask with the model type.
+    for tag in ("TimeSeries", "Tabular", "model"):
+        desc = quant.get_scenario_all_desc(filtered_tag=tag)
+        assert "develop new models" in desc and "class Net" in desc and "result.h5" not in desc
+    assert "result.h5" in quant.get_scenario_all_desc(filtered_tag="feature")
+    assert "develop new models" in quant.get_scenario_all_desc(action="model")
+    whole = quant.get_scenario_all_desc()
+    assert "develop new factors and models" in whole and "class Net" in whole
+    assert quant.get_scenario_all_desc(filtered_tag="feedback") == whole
+
+
+def test_the_runtime_environment_is_read_once(monkeypatch):
+    import rdagent.scenarios.crypto.qlib.experiment as module
+
+    calls = []
+    monkeypatch.setattr(module, "get_runtime_environment_by_env", lambda env: calls.append(env) or "python 3.10")
+    monkeypatch.setattr(module, "get_factor_env", lambda: "factor env")
+    monkeypatch.setattr(module, "get_model_env", lambda: "model env")
+    quant = CryptoQlibQuantScenario.__new__(CryptoQlibQuantScenario)
+    quant._runtime_environment = {}
+    for _ in range(3):
+        quant.get_runtime_environment()
+        quant.get_runtime_environment(tag="model")
+    assert calls == ["factor env", "model env"]
+
+
+def test_the_qlib_feedback_and_proposal_treat_it_as_a_quant_scenario(factor_tables, monkeypatch):
+    quant = CryptoQlibQuantScenario()
+    assert isinstance(quant, QlibQuantScenario)  # registered, not inherited
+    assert not isinstance(CryptoQlibFactorScenario(), QlibQuantScenario)
+    hypothesis = Hypothesis("A smaller GRU", "", "", "", "", "")
+    trace = Trace(scen=quant)
+    context, _ = QlibModelHypothesis2Experiment().prepare_context(hypothesis, trace)
+    assert context["scenario"] == quant.get_scenario_all_desc(action="model")
+
+    prompts = []
+
+    class Backend:
+        def build_messages_and_create_chat_completion(self, user_prompt, system_prompt, **kwargs):
+            prompts.append(system_prompt)
+            answer = {"Observations": "", "Feedback for Hypothesis": "", "New Hypothesis": "", "Reasoning": ""}
+            return json.dumps({**answer, "Decision": True})
+
+    monkeypatch.setattr(qlib_feedback, "APIBackend", Backend)
+    task = ModelTask(
+        name="GRU",
+        description="a GRU",
+        formulation="h_t = GRU(x_t, h_{t-1})",
+        architecture="one layer",
+        variables={},
+        hyperparameters={},
+        training_hyperparameters={},
+        model_type="TimeSeries",
+    )
+    experiment = CryptoQlibModelExperiment(sub_tasks=[task], hypothesis=hypothesis)
+    experiment.result = pd.Series(0.1, index=qlib_feedback.IMPORTANT_METRICS)
+    experiment.sub_workspace_list = [SimpleNamespace(file_dict={"model.py": "model_cls = None"})]
+    feedback = qlib_feedback.QlibModelExperiment2Feedback(quant).generate_feedback(experiment, trace)
+    # The model feedback prompt, whose answer carries the "Decision" the feedback reads.
+    assert feedback.decision is True
+    assert all("quantitative analysis assistant" in prompt and "develop new models" in prompt for prompt in prompts)
 
 
 def test_the_loops_wire_the_crypto_classes():
