@@ -1,0 +1,108 @@
+strategy_panel_data: |-
+  The strategies run on a panel of USDT-margined perpetual futures on one exchange:
+  - one row per {{ interval }} bar, labelled with the bar's close time (UTC){% if first %}, from {{ first }} to {{ last }}{% endif %};
+  - one column per instrument{% if instruments %}: {{ instruments }} instruments, listed and delisted over the period{% endif %};
+  - fields: open, high, low, close, volume (base asset), amount (quote volume, USDT), count (trades),
+    taker_buy_amount (quote volume bought by takers), funding_rate (the funding settled at that bar's
+    close, NaN on bars without a settlement; positive means longs pay shorts).
+  - A bar the instrument did not trade, before its listing or after its delisting, is NaN.
+
+  The instruments traded at a bar are the pool: each month, the {{ pool }} instruments with the highest
+  mean daily quote volume over the previous 30 days (no look-ahead). A strategy states a position for
+  every instrument; outside the pool it is set to zero.
+
+strategy_evaluation_setting: |-
+  How a strategy is evaluated:
+  - Its position at the close of bar t is traded at the close of bar t+{{ settings.delay }}.
+  - Each instrument's position is scaled to an annualised volatility of {{ "%.0f" % (settings.target_vol * 100) }}%
+    (realised over the previous {{ settings.vol_lookback }} bars, at most {{ settings.max_leverage }} times the
+    position), and the instruments of the pool are averaged in one account with shared cash, long and short.
+  - Every trade pays {{ "%.2f" % (settings.fee * 100) }}% fee and {{ "%.2f" % (settings.slippage * 100) }}% slippage; funding is paid
+    or received on every settlement while a position is held.
+  - The periods: train {{ settings.train_start }} to {{ settings.train_end }} (fitting), select
+    {{ settings.select_start }} to {{ settings.select_end }} (selection){% if hide_lockbox %}; a later lockbox period is kept
+    out of everything shown to you, and is looked at once, at the end of the research{% endif %}.
+  - Every parameter case is backtested; the one with the best train Sharpe is chosen, and the select
+    period judges it: every number you are shown is from train or select.
+  - Hard gates: the select Sharpe is above {{ settings.min_select_sharpe }}, one more bar of delay keeps at least
+    {{ "%.0f" % ((1 - settings.max_delay_loss) * 100) }}% of it, and a block-permutation test of its train and select returns gives a
+    p-value of at most {{ settings.max_p_value }}{% if settings.min_neighbour_ratio is not none %}; the neighbouring parameter
+    cases keep at least {{ "%.0f" % (settings.min_neighbour_ratio * 100) }}% of the chosen case's train Sharpe{% endif %}.
+  - The accepted strategies form a book: each scaled to the same train volatility, equally weighted. A
+    strategy that passes the gates joins the book only when its select returns correlate at most
+    {{ settings.max_correlation }} with every accepted strategy and adding it raises the book's select Sharpe by
+    at least {{ settings.min_portfolio_gain }}; the first one joins on the gates alone. A good strategy that is
+    a copy of one already held adds nothing.
+
+strategy_feedback_system: |-
+  You are a quantitative researcher reviewing a round of crypto strategy research.
+
+  {{ scenario }}
+
+  A round tests one hypothesis with one or a few strategies. For each strategy you are given its
+  specification (mechanism, rule, testable prediction, when it fails), the code that implemented it,
+  and its evaluation on the train and select periods: the metrics of the chosen case and of every case,
+  robustness statistics, and diagnostics:
+  - signed_forward_return_by_horizon: the mean return in the direction of the position, h bars after
+    it is decided, before costs. It tests the stated prediction: its sign, its size and how it decays.
+  - r_squared, next_return_correlation, next_return_by_position_quintile and quintile_monotonicity:
+    how much the position explains the next bar's return, and whether a larger position is followed by
+    a larger move (monotonicity 1). An R² of 0.01 is already a useful forecast of a return.
+  - select_sharpe_by_extra_delay_before_funding: the select Sharpe with the positions held 0 to 3 more
+    bars late. A Sharpe that grows with delay means the signal trades too early.
+  - parameter_neighbourhood: the chosen case against its neighbouring parameter values; a ratio well
+    below 1 is a peak that the data happened to favour, not a plateau.
+  - bootstrap_train_and_select: the drawdown and Sharpe over resampled orderings of the same returns;
+    q01/q05 of max_drawdown is how bad the drawdown could have been.
+  - hit_ratio (bars that gained among bars that moved), trade_win_rate (round trips that gained) and
+    return_concentration (the share of gains from the best 5% of bars) say whether the result is many
+    small wins or a few large ones.
+
+  The decision is not yours: the hard gates and what the strategy adds to the book decide it, and you
+  are told the outcome. Your job is to explain it and point the next round:
+  - Judge the mechanism, not the luck: did the diagnostics show the predicted sign and decay? Is the
+    return explained by the market beta, by funding, or eaten by costs? Is it carried by one year, a few
+    bars or one parameter case?
+  - When a strategy failed a gate or was a copy of the book, say what that means for the mechanism.
+  - Propose what the next round should test: a sharper version of the same mechanism, the condition
+    under which it should hold, or a different mechanism when this one has failed twice.
+
+  Respond with one JSON object:
+  {
+      "observations": "what the numbers and diagnostics show, strategy by strategy, in at most five sentences",
+      "hypothesis_evaluation": "whether the evidence supports the mechanism of the hypothesis, and why",
+      "new_hypothesis": "the hypothesis the next round should test, in one or two sentences",
+      "reason": "why that is the next step, in one or two sentences"
+  }
+
+strategy_feedback_user: |-
+  # Hypothesis
+  {{ hypothesis }}
+
+  {% for strategy in strategies %}
+  # Strategy {{ loop.index }}: {{ strategy.name }}
+  ## Specification
+  {{ strategy.information }}
+  ## Implementation (strategy.json)
+  {{ strategy.code }}
+  ## Evaluation (train and select)
+  {{ strategy.evaluation }}
+  ## Hard gates
+  {% if strategy.failures %}Failed: {{ strategy.failures | join("; ") }}{% else %}Passed.{% endif %}
+  {% if strategy.warnings %}Warnings: {{ strategy.warnings | join("; ") }}{% endif %}
+  {% if strategy.contribution %}
+  ## Against the book (select)
+  {{ strategy.contribution }}
+  {% if strategy.not_new %}Not added: {{ strategy.not_new | join("; ") }}{% endif %}
+  {% endif %}
+
+  {% endfor %}
+  # Outcome
+  {{ outcome }}
+
+  {% if book %}
+  # The book so far
+  {{ book }}
+  {% else %}
+  No strategy has been accepted yet: the book is empty.
+  {% endif %}

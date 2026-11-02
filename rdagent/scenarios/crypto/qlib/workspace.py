@@ -40,8 +40,8 @@ def require_data(settings: CryptoQlibSettings = CRYPTO_QLIB_SETTINGS, docker: bo
     if not (directory / "calendars" / "day.txt").is_file() or not pool.is_file():
         raise CryptoDataMissing(
             f"No crypto qlib data with the pool {settings.market!r} in {directory}. Write it with "
-            f"`jarvis-history qlib --out {settings.provider_uri} --top "
-            f"{settings.market.removeprefix('top')}` (jarvis-trader-service/scripts), or set "
+            f"`jarvis-data qlib --out {settings.provider_uri} --top "
+            f"{settings.market.removeprefix('top')}` (https://github.com/nivalume/jarvis-data), or set "
             "CRYPTO_QLIB_PROVIDER_URI / CRYPTO_QLIB_MARKET."
         )
     return directory
@@ -76,11 +76,20 @@ class CryptoQlibFBWorkspace(QlibFBWorkspace):
     def qlib_env(self):
         return crypto_qlib_env()
 
+    lockbox: bool = False
+    """Run on the lockbox instead of the selection period: only the lockbox command sets it."""
+
     def execute(self, qlib_config_name: str = "conf.yaml", run_env: dict = {}, *args, **kwargs):
-        """Run a workflow config with the crypto settings in place of the runner's segments. The end
-        of the test segment is always set: the runner would otherwise pass its own (CN) one."""
-        env = {**run_env, **CRYPTO_QLIB_SETTINGS.run_env()}
-        env["test_end"] = CRYPTO_QLIB_SETTINGS.test_end or last_test_day()
+        """Run a workflow config with the crypto settings in place of the runner's segments: qlib's
+        test segment is the selection period (the lockbox only when ``lockbox`` is set), and its end
+        is always set, since the runner would otherwise pass its own (CN) one."""
+        # What the lockbox and rolling runs repeat: the runner's own variables and config.
+        self.last_run = (qlib_config_name, dict(run_env))
+        segments = CRYPTO_QLIB_SETTINGS.run_env(
+            lockbox=getattr(self, "lockbox", False),
+            last_day=last_test_day() if getattr(self, "lockbox", False) else None,
+        )
+        env = {**run_env, **segments}
         return super().execute(qlib_config_name, env, *args, **kwargs)
 
 

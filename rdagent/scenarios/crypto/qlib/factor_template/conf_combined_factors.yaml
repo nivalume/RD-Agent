@@ -41,7 +41,7 @@ port_analysis_config: &port_analysis_config
             topk: {{ crypto_topk | default(20, true) }}
             n_drop: {{ crypto_n_drop | default(4, true) }}
     backtest:
-        start_time: {{ test_start | default("2024-07-01", true) }}
+        start_time: {{ test_start | default("2023-07-01", true) }}
         end_time: {{ test_end | default("null", true) }}
         account: 100000000
         benchmark: *benchmark
@@ -75,9 +75,9 @@ task:
                 module_path: qlib.contrib.data.handler
                 kwargs: *data_handler_config
             segments:
-                train: [{{ train_start | default("2021-01-01", true) }}, {{ train_end | default("2023-06-30", true) }}]
-                valid: [{{ valid_start | default("2023-07-01", true) }}, {{ valid_end | default("2024-06-30", true) }}]
-                test: [{{ test_start | default("2024-07-01", true) }}, {{ test_end | default("null", true) }}]
+                train: [{{ train_start | default("2021-01-01", true) }}, {{ train_end | default("2022-12-29", true) }}]
+                valid: [{{ valid_start | default("2023-01-01", true) }}, {{ valid_end | default("2023-06-28", true) }}]
+                test: [{{ test_start | default("2023-07-01", true) }}, {{ test_end | default("null", true) }}]
     record: 
         - class: SignalRecord
           module_path: qlib.workflow.record_temp

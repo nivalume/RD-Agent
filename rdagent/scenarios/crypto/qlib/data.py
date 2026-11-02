@@ -34,6 +34,7 @@ def generate_crypto_factor_data(settings: CryptoQlibSettings = CRYPTO_QLIB_SETTI
             "crypto_market": settings.market,
             "debug_instruments": str(settings.debug_instruments),
             "debug_start": settings.debug_start,
+            "debug_end": settings.train_end,
         },
     )
     for name in ("daily_pv_all.h5", "daily_pv_debug.h5"):
@@ -47,16 +48,34 @@ def generate_crypto_factor_data(settings: CryptoQlibSettings = CRYPTO_QLIB_SETTI
         target.mkdir(parents=True, exist_ok=True)
         shutil.move(FACTOR_DATA_TEMPLATE / source, target / "daily_pv.h5")
         shutil.copy(FACTOR_DATA_TEMPLATE / "README.md", target / "README.md")
+    _stamp_path(settings).write_text(_debug_stamp(settings))
     logger.info(f"Wrote the crypto factor data to {settings.factor_data_folder}")
 
 
+DEBUG_STAMP = ".period"
+
+
+def _stamp_path(settings: CryptoQlibSettings) -> Path:
+    """Beside the debug folder, not in it: the coder describes and copies every file of the folder."""
+    folder = Path(settings.factor_data_folder_debug)
+    return folder.with_name(folder.name + DEBUG_STAMP)
+
+
+def _debug_stamp(settings: CryptoQlibSettings) -> str:
+    return f"{settings.market} {settings.debug_instruments} {settings.debug_start} {settings.train_end}"
+
+
 def use_crypto_factor_data(settings: CryptoQlibSettings = CRYPTO_QLIB_SETTINGS) -> None:
-    """Make the factor coder read the crypto tables, writing them first when they are missing."""
+    """Make the factor coder read the crypto tables, writing them first when they are missing or the
+    debug table was cut for another period (it must lie inside the fitting period)."""
     FACTOR_COSTEER_SETTINGS.data_folder = settings.factor_data_folder
     FACTOR_COSTEER_SETTINGS.data_folder_debug = settings.factor_data_folder_debug
+    stamp = _stamp_path(settings)
     if (
         not (Path(settings.factor_data_folder) / "daily_pv.h5").exists()
         or not (Path(settings.factor_data_folder_debug) / "daily_pv.h5").exists()
+        or not stamp.exists()
+        or stamp.read_text() != _debug_stamp(settings)
     ):
         generate_crypto_factor_data(settings)
 

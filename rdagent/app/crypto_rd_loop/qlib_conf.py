@@ -23,13 +23,19 @@ CRYPTO_QLIB = "rdagent.scenarios.crypto.qlib"
 QLIB = "rdagent.scenarios.qlib"
 
 
+_RENDERED = CRYPTO_QLIB_SETTINGS.run_env()
+
+
 class _Segments:
-    train_start: str = CRYPTO_QLIB_SETTINGS.train_start
-    train_end: str = CRYPTO_QLIB_SETTINGS.train_end
-    valid_start: str = CRYPTO_QLIB_SETTINGS.valid_start
-    valid_end: str = CRYPTO_QLIB_SETTINGS.valid_end
-    test_start: str = CRYPTO_QLIB_SETTINGS.test_start
-    test_end: Optional[str] = CRYPTO_QLIB_SETTINGS.test_end
+    """The segments the workflows run with (qlib's test is the selection period); the workspace
+    passes these itself, so these only mirror them."""
+
+    train_start: str = _RENDERED["train_start"]
+    train_end: str = _RENDERED["train_end"]
+    valid_start: str = _RENDERED["valid_start"]
+    valid_end: str = _RENDERED["valid_end"]
+    test_start: str = _RENDERED["test_start"]
+    test_end: Optional[str] = _RENDERED.get("test_end")
 
 
 class CryptoQlibFactorPropSetting(FactorBasePropSetting):
