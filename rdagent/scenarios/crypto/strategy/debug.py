@@ -3,7 +3,7 @@
 Code is checked on a small panel before it is backtested. That panel is the most traded
 ``debug_instruments`` over the last ``debug_days`` up to ``train_end``: it lies inside the fitting
 period, so nothing the coder reports to the model (how often a strategy is in the market, how large
-its positions are) comes from the selection period or the lockbox. ``jarvis-history panel`` also
+its positions are) comes from the selection period or the lockbox. ``jarvis-data panel`` also
 writes a ``debug/`` slice, the most recent year; it is not used here for that reason.
 
 The slice is written once to ``<panel>/debug_train/`` and written again when the panel or the

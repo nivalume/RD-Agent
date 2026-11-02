@@ -13,7 +13,7 @@ One round:
 The lockbox is never shown to the model (``CRYPTO_STRATEGY_HIDE_TEST``); read it with the
 report::
 
-    jarvis-history panel --interval 4h --top 100 --out ~/jarvis-data/strategy/4h   # the data, once
+    jarvis-data panel --interval 4h --top 100 --out ~/jarvis-data/strategy/4h   # the data, once
     python -m rdagent.app.crypto_rd_loop.strategy --loop_n 20
     python -m rdagent.scenarios.crypto.strategy.report log/<session>
 

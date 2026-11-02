@@ -12,7 +12,7 @@ from rdagent.utils.agent.tpl import T
 
 
 def panel_meta(panel: Path) -> dict:
-    """The ``meta.json`` jarvis-history wrote next to the panel; empty when there is none yet."""
+    """The ``meta.json`` jarvis-data wrote next to the panel; empty when there is none yet."""
     try:
         return json.loads((panel / "meta.json").read_text())
     except (OSError, ValueError):

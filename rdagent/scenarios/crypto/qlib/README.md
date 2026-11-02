@@ -2,7 +2,7 @@
 
 RD-Agent 的 qlib 循环（提出假设 → 写代码 → 在 qlib 上训练回测 → 反馈），换成加密货币数据：
 
-- 数据：`jarvis-history qlib` 写出的 qlib 数据目录。全部 USDT 本位永续（含已下架），每个 UTC 日一行；
+- 数据：`jarvis-data qlib` 写出的 qlib 数据目录。全部 USDT 本位永续（含已下架），每个 UTC 日一行；
   `top<N>` 标的池每月初按此前 30 天的平均成交额选出，没有前视。
 - 场景描述：市场与日历用 `rdagent/scenarios/crypto/experiment/prompts.yaml` 里的加密货币 prompt
   （`crypto_market`、`crypto_quant_background`、`crypto_quant_calendar`），评估设定（标的池、标签、模型、
@@ -17,8 +17,8 @@ RD-Agent 的 qlib 循环（提出假设 → 写代码 → 在 qlib 上训练回�
 
    ```bash
    # universe.toml 已包含全部 USDT 永续的 1d K 线和资金费率
-   uv run --package jarvis-history jarvis-history download --kind bar --kind funding --interval 1d
-   uv run --package jarvis-history jarvis-history qlib --out ~/.qlib/qlib_data/crypto_data --top 100
+   uv run --package jarvis-data jarvis-data download --kind bar --kind funding --interval 1d
+   uv run --package jarvis-data jarvis-data qlib --out ~/.qlib/qlib_data/crypto_data --top 100
    ```
 
    数据目录必须在 `~/.qlib` 下：docker 模式只挂载这个目录。

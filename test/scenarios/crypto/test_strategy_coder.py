@@ -1,7 +1,7 @@
 """The strategy coder: its prompt, its artefact, and its checks on a debug panel.
 
 The chat backend is stubbed; the checks run for real, in a child process, on a small synthetic
-panel written the way jarvis-history writes one.
+panel written the way jarvis-data writes one.
 """
 
 import json

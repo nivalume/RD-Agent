@@ -154,7 +154,7 @@ def write_data(home: Path, pool: str = "top100") -> Path:
 
 def test_the_data_must_be_written_first(tmp_path):
     settings = CryptoQlibSettings(provider_uri=str(tmp_path / ".qlib" / "qlib_data" / "crypto_data"))
-    with pytest.raises(CryptoDataMissing, match="jarvis-history qlib --out .* --top 100"):
+    with pytest.raises(CryptoDataMissing, match="jarvis-data qlib --out .* --top 100"):
         require_data(settings)
     directory = write_data(tmp_path)
     assert require_data(settings) == directory

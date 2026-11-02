@@ -40,8 +40,8 @@ def require_data(settings: CryptoQlibSettings = CRYPTO_QLIB_SETTINGS, docker: bo
     if not (directory / "calendars" / "day.txt").is_file() or not pool.is_file():
         raise CryptoDataMissing(
             f"No crypto qlib data with the pool {settings.market!r} in {directory}. Write it with "
-            f"`jarvis-history qlib --out {settings.provider_uri} --top "
-            f"{settings.market.removeprefix('top')}` (jarvis-trader-service/scripts), or set "
+            f"`jarvis-data qlib --out {settings.provider_uri} --top "
+            f"{settings.market.removeprefix('top')}` (jarvis-trader-service/jarvis-data), or set "
             "CRYPTO_QLIB_PROVIDER_URI / CRYPTO_QLIB_MARKET."
         )
     return directory

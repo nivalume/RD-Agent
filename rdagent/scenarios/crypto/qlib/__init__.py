@@ -3,7 +3,7 @@
 The loop is RD-Agent's qlib loop -- its factor and model coders, its runners and its feedback --
 pointed at a crypto data directory instead of the CN one:
 
-* the data is a qlib directory written by ``jarvis-history qlib`` (``~/.qlib/qlib_data/crypto_data``
+* the data is a qlib directory written by ``jarvis-data qlib`` (``~/.qlib/qlib_data/crypto_data``
   by default): every USD-M perpetual quoted in USDT, delisted ones included, a row a UTC day, and
   monthly ``top<N>`` pools chosen from the 30 days before each month;
 * the scenario describes the crypto market with the crypto prompts of

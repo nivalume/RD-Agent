@@ -7,7 +7,7 @@ The loops are the qlib ones (propose, code, run on qlib, feedback) on the crypto
     python -m rdagent.app.crypto_rd_loop.qlib model --loop_n 5     # models, on the base features
     python -m rdagent.app.crypto_rd_loop.qlib quant --loop_n 10    # each round picks factor or model
 
-Before the first run, write the data with ``jarvis-history qlib --out ~/.qlib/qlib_data/crypto_data
+Before the first run, write the data with ``jarvis-data qlib --out ~/.qlib/qlib_data/crypto_data
 --top 100`` (jarvis-trader-service). The first loop also writes the factor coder's tables
 (``git_ignore_folder/crypto_factor_source_data``) from that directory.
 

@@ -223,7 +223,7 @@ def test_a_strategy_that_knows_the_future_has_a_tiny_p_value():
     assert engine.metrics(run, panel, seen)["sharpe"] > 5
 
 
-def test_the_panel_loads_what_jarvis_history_writes(tmp_path):
+def test_the_panel_loads_what_jarvis_data_writes(tmp_path):
     panel = random_panel(rows=10, columns=2)
     times = pd.to_datetime(panel.index, unit="ns", utc=True).rename("time")
     for name, values in panel.fields.items():

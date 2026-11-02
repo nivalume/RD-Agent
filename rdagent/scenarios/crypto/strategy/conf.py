@@ -1,6 +1,6 @@
 """The crypto strategy settings, from ``CRYPTO_STRATEGY_`` environment variables.
 
-The panel is written by ``jarvis-history panel --interval 4h --top 100 --out <panel_dir>``; its
+The panel is written by ``jarvis-data panel --interval 4h --top 100 --out <panel_dir>``; its
 the coder checks code on a slice of it cut from the fitting period (see ``debug.py``).
 """
 

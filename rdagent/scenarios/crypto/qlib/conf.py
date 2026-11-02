@@ -18,7 +18,7 @@ class CryptoQlibSettings(ExtendedBaseSettings):
     model_config = SettingsConfigDict(env_prefix="CRYPTO_QLIB_", env_parse_none_str="None", populate_by_name=True)
 
     provider_uri: str = "~/.qlib/qlib_data/crypto_data"
-    """The qlib data directory ``jarvis-history qlib`` wrote. It must be under ``~/.qlib``: that is
+    """The qlib data directory ``jarvis-data qlib`` wrote. It must be under ``~/.qlib``: that is
     what the docker environment mounts (at ``/root/.qlib``)."""
 
     market: str = "top100"

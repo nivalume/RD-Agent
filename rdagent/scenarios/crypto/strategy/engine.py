@@ -3,7 +3,7 @@
 Everything that runs a strategy is here, as plain functions on numpy arrays, so the coder's checks,
 the runner and the tests run the same code:
 
-* :class:`Panel` -- the wide tables ``jarvis-history panel`` writes: ``(T, S)`` arrays of bars and
+* :class:`Panel` -- the wide tables ``jarvis-data panel`` writes: ``(T, S)`` arrays of bars and
   funding, the bar close times, the symbols and the top-N pool mask;
 * :func:`positions` -- a strategy spec (a phasor expression, or numpy code) evaluated into target
   positions in [-1, 1], one array per parameter case;
