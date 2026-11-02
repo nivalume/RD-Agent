@@ -41,7 +41,7 @@ def require_data(settings: CryptoQlibSettings = CRYPTO_QLIB_SETTINGS, docker: bo
         raise CryptoDataMissing(
             f"No crypto qlib data with the pool {settings.market!r} in {directory}. Write it with "
             f"`jarvis-data qlib --out {settings.provider_uri} --top "
-            f"{settings.market.removeprefix('top')}` (jarvis-trader-service/jarvis-data), or set "
+            f"{settings.market.removeprefix('top')}` (https://github.com/nivalume/jarvis-data), or set "
             "CRYPTO_QLIB_PROVIDER_URI / CRYPTO_QLIB_MARKET."
         )
     return directory

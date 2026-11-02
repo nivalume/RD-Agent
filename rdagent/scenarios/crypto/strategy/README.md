@@ -4,14 +4,14 @@
 
 ## 数据
 
-`jarvis-data panel`（jarvis-trader-service，`feat/strategy-panel` 分支）写宽表 Parquet：每个字段一个文件
+`jarvis-data panel`（[nivalume/jarvis-data](https://github.com/nivalume/jarvis-data) 仓库）写宽表 Parquet：每个字段一个文件
 （行 = bar 收盘时间 UTC，列 = 标的），`funding_rate` 放在结算时刻所在的 bar，`pool.parquet` 是每个 bar 的
 标的池（每月按此前 30 天平均成交额取前 N，无前视）。导出的 `debug/` 是最近一年，落在锁箱里，不用；coder 用的检查样本由
 RD-Agent 从训练段最后 `debug_days` 天、成交额前 `debug_instruments` 个标的切出，写在 `<panel>/debug_train/`。
 
 ```bash
-uv run --package jarvis-data jarvis-data download --kind bar --kind funding --interval 4h
-uv run --package jarvis-data jarvis-data panel --interval 4h --top 100 --out ~/jarvis-data/strategy/4h
+uv run jarvis-data download --kind bar --kind funding --interval 4h
+uv run jarvis-data panel --interval 4h --top 100 --out ~/jarvis-data/strategy/4h
 ```
 
 频率由 panel 决定（1h、4h、1d 都可以），`CRYPTO_STRATEGY_PANEL_DIR` 指向它。

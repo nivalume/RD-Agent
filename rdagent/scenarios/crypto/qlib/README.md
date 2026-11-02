@@ -13,12 +13,12 @@ RD-Agent 的 qlib 循环（提出假设 → 写代码 → 在 qlib 上训练回�
 
 ## 准备
 
-1. 下载数据并导出（jarvis-trader-service 仓库）：
+1. 下载数据并导出（[nivalume/jarvis-data](https://github.com/nivalume/jarvis-data) 仓库，在其目录下运行）：
 
    ```bash
    # universe.toml 已包含全部 USDT 永续的 1d K 线和资金费率
-   uv run --package jarvis-data jarvis-data download --kind bar --kind funding --interval 1d
-   uv run --package jarvis-data jarvis-data qlib --out ~/.qlib/qlib_data/crypto_data --top 100
+   uv run jarvis-data download --kind bar --kind funding --interval 1d
+   uv run jarvis-data qlib --out ~/.qlib/qlib_data/crypto_data --top 100
    ```
 
    数据目录必须在 `~/.qlib` 下：docker 模式只挂载这个目录。
