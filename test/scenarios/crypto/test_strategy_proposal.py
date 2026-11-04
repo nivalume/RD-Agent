@@ -295,6 +295,18 @@ def test_the_task_brief_information_carries_the_economic_logic():
     assert "parameters: " in brief
 
 
+def test_the_system_prompt_states_the_source_of_return_and_its_limits(scenario, hypothesis_gen):
+    system_prompt, _user_prompt = hypothesis_gen.render_prompts(
+        hypothesis_gen.prepare_context(Trace(scen=scenario))[0],
+    )
+    normalized = " ".join(system_prompt.split())
+
+    assert "A statistical description alone is not a mechanism." in normalized
+    for heading in ("**Return source**", "**Counterparty**", "**Limits to arbitrage**", "**Invalidation**"):
+        assert heading in system_prompt
+    assert "Do not give the condition in LaTeX at this stage." in system_prompt
+
+
 def test_the_strategy_prompts_name_no_instrument():
     for key in (
         "strategy_hypothesis_gen_system_prompt",
