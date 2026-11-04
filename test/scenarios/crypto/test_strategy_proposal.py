@@ -74,7 +74,11 @@ def data_root(tmp_path):
 
 @pytest.fixture
 def scenario(data_root) -> CryptoStrategyScenario:
-    return CryptoStrategyScenario(with_runtime_environment=False, data_root_dir=data_root)
+    return CryptoStrategyScenario(
+        with_runtime_environment=False,
+        data_root_dir=data_root,
+        available_schemas=["market.crypto.bar.v1.json"],
+    )
 
 
 @pytest.fixture
@@ -85,6 +89,25 @@ def hypothesis_gen(scenario) -> CryptoStrategyHypothesisGen:
 @pytest.fixture
 def hypothesis(hypothesis_gen) -> Hypothesis:
     return hypothesis_gen.convert_response(json.dumps(HYPOTHESIS_RESPONSE))
+
+
+def test_the_scenario_describes_only_the_configured_schema_files(tmp_path, monkeypatch):
+    monkeypatch.delenv("QLIB_FACTOR_AVAILABLE_SCHEMAS", raising=False)
+    (tmp_path / "schemas").mkdir()
+    for name, slug in (
+        ("binance.market.crypto.derivative_bar.v1.json", "binance.market.crypto.derivative_bar"),
+        ("market.crypto.bar.v1.json", "market.crypto.bar"),
+    ):
+        (tmp_path / "schemas" / name).write_text(
+            json.dumps({"slug": slug, "version": 1, "name": slug, "columns": [{"name": "close", "type": "float"}]}),
+            encoding="utf-8",
+        )
+    (tmp_path / "crypto" / "data" / "crypto_bar").mkdir(parents=True)
+
+    described = CryptoStrategyScenario(with_runtime_environment=False, data_root_dir=tmp_path).get_source_data_desc()
+
+    assert "binance.market.crypto.derivative_bar" in described
+    assert "market.crypto.bar" not in described
 
 
 def test_gen_is_overridden(hypothesis_gen):

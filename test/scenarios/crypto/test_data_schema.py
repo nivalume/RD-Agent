@@ -63,6 +63,35 @@ def test_load_schemas_skips_a_broken_file(tmp_path):
     assert list(load_schemas(tmp_path / "schemas")) == ["market.crypto.bar"]
 
 
+def test_render_reads_only_the_named_schema_files(tmp_path):
+    root = make_root(tmp_path, "crypto_bar")
+    write(root, "market.crypto.bar.v1.json", BAR)
+    write(
+        root,
+        "binance.market.crypto.derivative_bar.v1.json",
+        {**BAR, "slug": "binance.market.crypto.derivative_bar", "name": "BinanceDerivativeBar"},
+    )
+
+    text = render_data_schemas(root, ["binance.market.crypto.derivative_bar.v1.json"])
+
+    assert "binance.market.crypto.derivative_bar" in text
+    assert "market.crypto.bar" not in text
+
+
+def test_render_skips_a_named_schema_whose_rows_are_missing(tmp_path):
+    root = make_root(tmp_path, "crypto_funding_rate")
+    write(root, "market.crypto.bar.v1.json", BAR)
+    write(root, "market.crypto_funding_rate.v1.json", FUNDING)
+
+    text = render_data_schemas(
+        root,
+        ["market.crypto_funding_rate.v1.json", "market.crypto.bar.v1.json", "missing.v1.json"],
+    )
+
+    assert "market.crypto_funding_rate" in text
+    assert "market.crypto.bar" not in text
+
+
 def test_render_injects_only_the_supported_schemas(tmp_path):
     root = make_root(tmp_path, "crypto_bar", "crypto_funding_rate", "crypto_open_interest")
     write(root, "market.crypto.bar.v1.json", BAR)

@@ -4,14 +4,15 @@ The data pipeline exports one JSON file per dataset (market.crypto.bar.v1.json):
 the columns with their types and the annotations that describe them. The files are the fact; this
 module only reads and renders them, so adding a dataset is a file, not a code change.
 
-Only the datasets in LAYOUTS are rendered, because each also needs a statement of how its rows are
-laid out on disk and how it meets the bars.
+Only the datasets in LAYOUTS are rendered from a full directory scan, because each also needs a
+statement of how its rows are laid out on disk and how it meets the bars. A caller that passes
+``available_schemas`` instead names the schema files to open, and no other file in the directory is read.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,16 +90,17 @@ def _rows_on_disk(data_root: Path, layout: Layout) -> bool:
     return layout.duckdb is not None and (data_root / layout.duckdb).is_file()
 
 
-def load_schemas(schema_dir: Path) -> dict[str, DataSchema]:
+def load_schemas(schema_dir: Path, available_schemas: Sequence[str] | None = None) -> dict[str, DataSchema]:
     """The latest version of each schema in schema_dir, by slug.
 
-    A file that does not parse or lacks a slug, a version or columns is skipped with a warning: the
-    data pipeline may be writing the directory while the scenario renders.
+    ``available_schemas`` names the files to open, in order. Without it, every ``*.json`` in the
+    directory is read. A file that does not parse or lacks a slug, a version or columns is skipped
+    with a warning: the data pipeline may be writing the directory while the scenario renders.
     """
     found: dict[str, DataSchema] = {}
     if not schema_dir.is_dir():
         return found
-    for path in sorted(schema_dir.glob("*.json")):
+    for path in _schema_paths(schema_dir, available_schemas):
         try:
             schema = _parse(path)
         except (OSError, KeyError, TypeError, ValueError) as error:
@@ -109,26 +111,30 @@ def load_schemas(schema_dir: Path) -> dict[str, DataSchema]:
     return found
 
 
-def render_data_schemas(data_root: Path) -> str:
-    """The prompt section of every injectable dataset under data_root, one block each.
+def render_data_schemas(data_root: Path, available_schemas: Sequence[str] | None = None) -> str:
+    """The prompt section of the datasets under data_root, one block each.
 
-    A dataset is injectable when its schema was found and its rows are on disk, so a schema the
-    pipeline wrote before the rows does not reach the prompt.
+    With ``available_schemas``, only those files are opened, in the order given, and a file whose
+    slug has no layout is still described. Without it, every schema file is scanned and only the
+    datasets in :data:`LAYOUTS` are rendered. A known layout is included only when its rows are on
+    disk, so a schema the pipeline wrote before the rows does not reach the prompt.
     """
     schema_dir = data_root / "schemas"
     if not schema_dir.is_dir():
         # The prompt falls back to "no data schema is available", which reads like a missing setting;
         # say which directory was looked at so the two causes are distinguishable.
         logger.warning(f"No data schemas under {schema_dir}: the prompt will not describe any dataset.")
-    schemas = load_schemas(schema_dir)
+    schemas = load_schemas(schema_dir, available_schemas)
     blocks = []
-    for slug, layout in LAYOUTS.items():
-        schema = schemas.get(slug)
-        if schema is None:
-            continue
-        if not _rows_on_disk(data_root, layout):
+    chosen = (
+        [(schema, LAYOUTS.get(schema.slug)) for schema in schemas.values()]
+        if available_schemas is not None
+        else [(schemas[slug], LAYOUTS[slug]) for slug in LAYOUTS if slug in schemas]
+    )
+    for schema, layout in chosen:
+        if layout is not None and not _rows_on_disk(data_root, layout):
             logger.warning(
-                f"Skipping the data schema {slug}: neither {data_root / layout.directory} "
+                f"Skipping the data schema {schema.slug}: neither {data_root / layout.directory} "
                 f"nor {data_root / layout.duckdb} is on disk"
             )
             continue
@@ -136,11 +142,30 @@ def render_data_schemas(data_root: Path) -> str:
     return "\n\n".join(blocks)
 
 
-def _render(schema: DataSchema, layout: Layout) -> str:
+def _schema_paths(schema_dir: Path, available_schemas: Sequence[str] | None) -> list[Path]:
+    """The schema files to open. A name has to be one file in ``schema_dir``, not a path."""
+    if available_schemas is None:
+        return sorted(schema_dir.glob("*.json"))
+    paths = []
+    for name in available_schemas:
+        filename = name.strip()
+        if not filename or Path(filename).name != filename:
+            logger.warning(f"Skipping the data schema {name!r}: it is not a file name")
+            continue
+        path = schema_dir / filename
+        if not path.is_file():
+            logger.warning(f"Skipping the data schema {filename}: {path} is not on disk")
+            continue
+        paths.append(path)
+    return paths
+
+
+def _render(schema: DataSchema, layout: Layout | None) -> str:
     # The schema's own description is the pipeline's boilerplate ("Jarvis CryptoBar history."); the
     # prompt only keeps what helps write a factor, the columns and where the rows are.
+    heading = f"{schema.name}, {layout.kind}" if layout is not None else schema.name
     lines = [
-        f"### `{schema.slug}` ({schema.name}, {layout.kind})",
+        f"### `{schema.slug}` ({heading})",
         "",
         "| Column | Type | Description |",
         "|---|---|---|",

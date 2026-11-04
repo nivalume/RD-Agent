@@ -176,3 +176,31 @@ crypto_strategy_background: |-
   - The cross-section is dominated by one common market factor. Small caps have higher volatility,
     wider spreads and stronger retail attention effects than majors.
   - Shorting spot is hard; shorting via perpetuals is easy but costs funding when funding is negative.
+
+  {% if runtime_environment %}
+  ====== Runtime Environment ======
+  You have following environment to run the code:
+  {{ runtime_environment }}
+  {% endif %}
+
+crypto_strategy_rich_style_description: |-
+  ### R&D Agent-Crypto: Automated Strategy Research on Perpetual Futures
+
+  #### [Overview](#_summary)
+
+  The demo iterates hypothesis generation and strategy design on crypto perpetual futures. A strategy
+  reads one instrument's own bars and funding, decides a position, and is judged on the pooled
+  distribution of its own returns.
+
+  #### [Automated R&D](#_rdloops)
+
+  - **[R (Research)](#_research)**
+    - Iterative development of a mechanism: who pays, why the transfer persists, and what risk is borne.
+
+  - **[D (Development)](#_development)**
+    - One tradeable rule, run with the same parameters on every instrument.
+
+  #### [Objective](#_summary)
+
+  To show how a strategy evolves through feedback, from a stated mechanism to a rule whose conditional
+  returns survive the risk it bears.

@@ -1,6 +1,6 @@
 """The crypto RD loop: the proposal-side steps, the settings behind them and the record step."""
 
-from rdagent.app.crypto_rd_loop.conf import CRYPTO_PROP_SETTING
+from rdagent.app.crypto_rd_loop.conf import CRYPTO_PROP_SETTING, StrategyBasePropSetting
 from rdagent.app.crypto_rd_loop.factor import NOT_EVALUATED, CryptoFactorRDLoop
 from rdagent.components.coder.factor_coder.factor import FactorTask
 from rdagent.core.proposal import Trace
@@ -27,6 +27,24 @@ def test_the_settings_leave_the_development_side_unwired():
 
 def test_the_scenario_is_rendered_without_the_factor_environment_by_default():
     assert CRYPTO_PROP_SETTING.with_runtime_environment is False
+
+
+def test_available_schemas_defaults_to_the_derivative_bar(monkeypatch):
+    monkeypatch.delenv("QLIB_FACTOR_AVAILABLE_SCHEMAS", raising=False)
+
+    assert StrategyBasePropSetting().available_schemas == ["binance.market.crypto.derivative_bar.v1.json"]
+
+
+def test_available_schemas_splits_on_commas(monkeypatch):
+    monkeypatch.setenv(
+        "QLIB_FACTOR_AVAILABLE_SCHEMAS",
+        "binance.market.crypto.derivative_bar.v1.json, binance.vision.market.crypto.funding.raw.v1.json",
+    )
+
+    assert StrategyBasePropSetting().available_schemas == [
+        "binance.market.crypto.derivative_bar.v1.json",
+        "binance.vision.market.crypto.funding.raw.v1.json",
+    ]
 
 
 def test_record_keeps_the_experiment_as_unevaluated():
