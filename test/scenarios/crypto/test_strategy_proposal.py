@@ -95,7 +95,7 @@ def test_the_scenario_describes_only_the_configured_schema_files(tmp_path, monke
     monkeypatch.delenv("QLIB_FACTOR_AVAILABLE_SCHEMAS", raising=False)
     (tmp_path / "schemas").mkdir()
     for name, slug in (
-        ("binance.market.crypto.derivative_bar.v1.json", "binance.market.crypto.derivative_bar"),
+        ("binance.vision.market.crypto.bar.raw.v1.json", "binance.vision.crypto.bar.raw"),
         ("market.crypto.bar.v1.json", "market.crypto.bar"),
     ):
         (tmp_path / "schemas" / name).write_text(
@@ -106,7 +106,7 @@ def test_the_scenario_describes_only_the_configured_schema_files(tmp_path, monke
 
     described = CryptoStrategyScenario(with_runtime_environment=False, data_root_dir=tmp_path).get_source_data_desc()
 
-    assert "binance.market.crypto.derivative_bar" in described
+    assert "binance.vision.crypto.bar.raw" in described
     assert "market.crypto.bar" not in described
 
 
@@ -163,11 +163,10 @@ def test_gen_prompts_carry_the_scenario_and_the_trace(scenario, hypothesis_gen):
         generated = hypothesis_gen.gen(trace)
 
     user_prompt, system_prompt = backend.return_value.build_messages_and_create_chat_completion.call_args.args
-    assert "Crypto assets traded on centralized exchanges" in system_prompt
+    assert "linear perpetual futures on centralized exchanges" in system_prompt
     assert "The clock:" in system_prompt
     assert "market.crypto.bar" in system_prompt
-    assert "What every proposal must state" in system_prompt
-    assert "Do not name any instrument, token, exchange, country, date, year" in system_prompt
+    assert "What Every Proposal Must State" in system_prompt
     # The factor path's framing must not leak into a strategy prompt.
     assert "The factor is a characteristic" not in system_prompt
     assert "# Trial 1:" in user_prompt

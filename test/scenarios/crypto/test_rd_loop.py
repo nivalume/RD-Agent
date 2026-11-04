@@ -29,10 +29,10 @@ def test_the_scenario_is_rendered_without_the_factor_environment_by_default():
     assert CRYPTO_PROP_SETTING.with_runtime_environment is False
 
 
-def test_available_schemas_defaults_to_the_derivative_bar(monkeypatch):
+def test_available_schemas_defaults_to_the_vision_raw_bar(monkeypatch):
     monkeypatch.delenv("QLIB_FACTOR_AVAILABLE_SCHEMAS", raising=False)
 
-    assert StrategyBasePropSetting().available_schemas == ["binance.market.crypto.derivative_bar.v1.json"]
+    assert StrategyBasePropSetting().available_schemas == ["binance.vision.market.crypto.bar.raw.v1.json"]
 
 
 def test_available_schemas_splits_on_commas(monkeypatch):

@@ -48,7 +48,7 @@ class CryptoPropSetting(BasePropSetting):
 class StrategyBasePropSetting(BasePropSetting):
     model_config = SettingsConfigDict(env_prefix="QLIB_FACTOR_", protected_namespaces=())
 
-    available_schemas: Annotated[list[str], NoDecode] = ["binance.market.crypto.derivative_bar.v1.json"]
+    available_schemas: Annotated[list[str], NoDecode] = ["binance.vision.market.crypto.bar.raw.v1.json"]
     """Schema files under ``<data root>/schemas`` that a strategy prompt may describe.
 
     Override with a comma-separated list in ``QLIB_FACTOR_AVAILABLE_SCHEMAS``. The scenario renders

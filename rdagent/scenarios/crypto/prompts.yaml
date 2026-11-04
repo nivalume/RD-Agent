@@ -102,64 +102,41 @@ strategy_hypothesis_gen_system_prompt: |
 
   ## What Every Proposal Must State
 
-  1. **Mechanism**\
+  1. **Mechanism**
      The specific economic friction that produces the price path. Name the friction (liquidation cascade,
      stop clustering, slow capital arrival, inventory pressure, etc.) and the exact price path it generates
      (overshoot then partial give-back, or under-reaction then continuation). A statistical description
      alone is not a mechanism.
 
-  2. **Return source**\
+  2. **Return source**
      Classify the expected excess return as exactly one of: a risk premium, a behavioral bias, or a
      structural constraint or friction. Name the channel through which it is earned. A description of the
      return distribution is not a source of return.
 
-  3. **Counterparty**\
+  3. **Counterparty**
      Identify the counterparty and the constraint under which that party transacts at an unfavorable
      price. A proposal that cannot name the party transferring the return is incomplete.
 
-  4. **Limits to arbitrage**\
+  4. **Limits to arbitrage**
      State the limit that prevents the transfer from being competed away. The binding limit is one of: a
      capital constraint, a leverage or margin constraint, a horizon mismatch, a regulatory or mandate
      restriction, insufficient capacity, or an opportunity outside the investment universe of large
      institutions. An appeal to market inefficiency is not a limit to arbitrage.
 
-  5. **Invalidation**\
+  5. **Invalidation**
      State in advance, in prose, the market state in which the named source of return ceases or reverses.
      The state is observable in the same bar fields used to form the signal, with the funding rate only as
      a secondary state. Do not give the condition in LaTeX at this stage. A generic reference to stress or
      crisis is not an invalidation condition.
-
-  **Simplicity constraint**\
-  The mechanism must be expressible with one primary state variable computed from bar fields (and funding
-  rate only as a secondary state). Do not stack conditions until the single-state version has been stated.
-
-  ====== Constraints ======
-  - Do not name any instrument, token, exchange, country, date, year or historical episode, and do not
-    reason from a specific episode. The mechanism must hold in any period.
-  - Time is measured in bars, never in dates: a lookback is N bars, a holding period is h bars.
-  - Every parameter is dimensionless or in units of the instrument's own recent volatility: a z-score
-    threshold, a multiple of realised volatility or ATR, a fraction of a rolling range. Never a price
-    level, never a currency amount, never a calendar window.
-  - Do not fit: give the mechanism's reason for a parameter value, keep the number of free parameters
-    small, and prefer a threshold that has an interpretation.
-  - Use the data described above and nothing else: no news, no order book, no on-chain data, no options,
-    no other instrument.
-  - State the expected holding period and a rough trade count.
-
-  ====== The trace ======
-  Read the trace: which mechanisms were accepted, which were rejected and why, and what the feedback says
-  about the mechanism rather than the parameters. Improve the mechanism or change it, and do not re-propose
-  what the trace already lists unless you can state exactly what is different.
-
   {% if user_instruction %}
   **User's overall instruction:**
   {{ user_instruction }}
   {% endif %}
 
-  ====== Output format ======
+  ## Output format
   {{ hypothesis_output_format }}
 
-  ====== Specification ======
+  ## Specification
   {{ hypothesis_specification }}
 
 strategy_hypothesis_output_format: |-

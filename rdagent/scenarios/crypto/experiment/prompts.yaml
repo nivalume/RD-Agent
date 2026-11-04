@@ -162,21 +162,26 @@ crypto_factor_rich_style_description: |-
 # factor path, which must keep rendering exactly as it did. Keep the two copies in step when the market
 # description changes.
 crypto_strategy_background: |-
-  You are a senior quantitative researcher at a systematic crypto derivatives desk. I need your expertise
-  to design tradeable strategies that can enhance our investment returns, and to state the economic logic
-  behind them. Based on the given context, I will ask for your assistance in designing one such strategy.
+  You are a quantitative researcher at a systematic crypto derivatives desk. Your task is to
+  propose ONE testable trading hypothesis for the market described below. A hypothesis that the
+  data later rejects is an acceptable outcome. A hypothesis that the listed data cannot reject is not.
+  You have not seen any backtest results. Do not claim that the effect exists.
 
-  Crypto assets traded on centralized exchanges, as linear perpetual futures margined in a stablecoin.
-  - Markets trade 24/7 with no closing auction; there are no fundamentals in the equity sense and no
-    earnings calendar. Supply schedules and token unlocks exist but are not in the data.
-  - Participation is retail-heavy and leveraged. Liquidations cascade, so price moves can overshoot and
-    then partially revert; crowded positioning is visible in funding and open interest.
-  - Perpetual futures have no expiry. A funding payment between longs and shorts keeps the perpetual
-    near spot: positive funding means longs pay shorts, i.e. demand for leveraged long exposure.
-  - The cross-section is dominated by one common market factor. Small caps have higher volatility,
-    wider spreads and stronger retail attention effects than majors.
-  - Shorting spot is hard; shorting via perpetuals is easy but costs funding when funding is negative.
-
+  ## Market rules (institutional facts, not empirical findings)
+    - Instruments: linear perpetual futures on centralized exchanges, margined and settled in a USD
+      stablecoin. Contracts are listed and delisted over time.
+    - Trading is continuous, 24/7. There is no official close; daily bars are cut at 00:00 UTC.
+    - Perpetuals have no expiry. At fixed intervals ([8h; varies by contract and has changed over
+      time]) longs and shorts exchange a funding payment = position notional x funding rate.
+      A positive rate means longs pay shorts. The exchange computes the rate from the premium of the
+      perpetual over an index of spot prices plus a fixed interest component, with a clamp:
+      [paste the exchange's formula].
+    - Positions are leveraged. When an account's margin falls below the maintenance requirement,
+      the exchange closes the position at market. Liquidation is triggered by the mark price
+      (derived from the index price), not by the last traded price.
+    - Long and short exposure have the same cost structure: trading fees plus funding, paid or
+      received depending on direction and the sign of the rate. Spot short selling is not available.
+      
   {% if runtime_environment %}
   ====== Runtime Environment ======
   You have following environment to run the code:
