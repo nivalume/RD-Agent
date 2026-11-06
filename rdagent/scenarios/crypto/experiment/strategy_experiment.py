@@ -18,18 +18,26 @@ It carries the economic mechanism next to the LaTeX rule -- who pays, why the tr
 risk is borne, and what the data should show -- so the thesis and the implementable rule cannot drift
 apart between generations.
 
-:class:`CryptoStrategyScenario` describes the same market to a strategy proposal: it subclasses the factor
-scenario so that the calendar, the data schemas and the runtime-environment handling stay in one place,
-and replaces only the background, because what the model is asked to build is different.
+:class:`CryptoStrategyScenario` describes the same market to a strategy proposal. It is a
+:class:`~rdagent.core.scenario.Scenario` of its own, the same way the factor scenario is: it renders the
+strategy background, the market calendar, the data schemas and the runtime environment here.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
+from rdagent.app.crypto_rd_loop.conf import StrategyBasePropSetting
+from rdagent.components.coder.factor_coder.config import get_factor_env
 from rdagent.core.experiment import Experiment, FBWorkspace, Task
-from rdagent.scenarios.crypto.experiment.factor_experiment import CryptoFactorScenario
+from rdagent.core.scenario import Scenario
+from rdagent.scenarios.crypto.conf import CryptoSettings
+from rdagent.scenarios.crypto.experiment.data_schema import render_data_schemas
+from rdagent.scenarios.crypto.experiment.factor_experiment import NO_DATA_SCHEMA
+from rdagent.scenarios.shared.get_runtime_info import get_runtime_environment_by_env
+from rdagent.utils.agent.tpl import T
 
 PHENOMENA = ("mean_reversion", "trend_following")
 """The two phenomena a strategy may trade. Everything else is out of scope for the crypto scenario."""
@@ -149,22 +157,88 @@ class CryptoStrategyExperiment(Experiment[StrategyTask, FBWorkspace, FBWorkspace
         self.stdout = ""
 
 
-class CryptoStrategyScenario(CryptoFactorScenario):
-    """The crypto market, described to a researcher who is asked for a strategy rather than a factor.
+class CryptoStrategyScenario(Scenario):
+    """The crypto market, described to a researcher who is asked for a strategy.
 
-    The market, the calendar and the data schemas are the factor scenario's. Only the background differs --
-    it names a strategy as the deliverable instead of a factor -- so the data-schema rendering and the
-    runtime-environment handling are inherited rather than copied.
+    The background names a strategy as the deliverable. The calendar, the data schemas and the runtime
+    environment are rendered on this scenario.
     """
 
-    def __init__(self, with_runtime_environment: bool = True, data_root_dir: Path | None = None) -> None:
-        super().__init__(with_runtime_environment=with_runtime_environment, data_root_dir=data_root_dir)
-        self._strategy_background = self._render(
+    def __init__(
+        self,
+        with_runtime_environment: bool = True,
+        data_root_dir: Path | None = None,
+        available_schemas: Sequence[str] | None = None,
+    ) -> None:
+        super().__init__()
+        self.with_runtime_environment = with_runtime_environment
+        self.data_root_dir = Path(data_root_dir) if data_root_dir is not None else CryptoSettings().data_root_dir
+        # The strategy settings name the schema files. An explicit list is for a caller that already
+        # holds the setting; otherwise the setting is read here, including its environment override.
+        self.available_schemas = (
+            list(available_schemas)
+            if available_schemas is not None
+            else list(StrategyBasePropSetting().available_schemas)
+        )
+        self._runtime_environment: str | None = None
+        self._background = self._render(
             "crypto_strategy_background",
             runtime_environment=self.get_runtime_environment() or None,
         )
+        self._calendar = self._render("crypto_quant_calendar")
+        # The schema listing is the market's data. The template is shared with the factor scenario.
+        self._source_data = self._render(
+            "crypto_factor_data",
+            data_schemas=render_data_schemas(self.data_root_dir, self.available_schemas) or NO_DATA_SCHEMA,
+        )
+        self._rich_style_description = self._render("crypto_strategy_rich_style_description")
+
+    @staticmethod
+    def _render(key: str, **context: object) -> str:
+        """Render one template of this scenario's `prompts.yaml`."""
+        return T(f".prompts:{key}").r(**context)
 
     @property
     def background(self) -> str:
-        """Overrides the factor background; ``get_scenario_all_desc`` picks it up through this property."""
-        return self._strategy_background
+        return self._background
+
+    @property
+    def calendar(self) -> str:
+        """How the market's clock runs."""
+        return self._calendar
+
+    def get_source_data_desc(self, task: Task | None = None) -> str:  # noqa: ARG002
+        return self._source_data
+
+    @property
+    def rich_style_description(self) -> str:
+        return self._rich_style_description
+
+    def get_scenario_all_desc(
+        self,
+        task: Task | None = None,
+        filtered_tag: str | None = None,
+        simple_background: bool | None = None,
+        action: str | None = None,
+    ) -> str:
+        """A static scenario describer: the market, its calendar and the data schemas."""
+        if simple_background:
+            return f"""Background of the scenario:
+{self.background}"""
+        return f"""Background of the scenario:
+{self.background}
+
+The calendar of the market:
+{self.calendar}
+
+The source data you can use:
+{self.get_source_data_desc(task)}
+"""
+
+    def get_runtime_environment(self) -> str:
+        """The packages of the factor environment; empty when the scenario is rendered without it."""
+        if not self.with_runtime_environment:
+            return ""
+        if self._runtime_environment is None:
+            self._runtime_environment = get_runtime_environment_by_env(env=get_factor_env())
+        return self._runtime_environment

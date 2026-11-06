@@ -1,19 +1,25 @@
-"""Where a crypto qlib experiment runs: the qlib workspace with the crypto data and settings.
+"""Where a crypto qlib experiment runs: a workspace of its own on the crypto data and settings.
 
-The upstream qlib loop runs its workflow configs in docker (``QTDockerEnv``) or conda
-(``QlibCondaEnv``), as ``MODEL_CoSTEER_ENV_TYPE`` says. Both are kept here; only two things change:
+It holds a workflow config template folder and runs one of its configs with ``qrun``, then reads the
+results with ``read_exp_res.py``, as the qlib workspace does; the qlib runners call ``execute`` the
+same way. The environment is docker (``QTDockerEnv``) or conda (``QlibCondaEnv``), as
+``MODEL_CoSTEER_ENV_TYPE`` says, with two differences from the qlib workspace:
 
 * preparing docker does not download the CN data -- the crypto data must already be under
   ``~/.qlib``, which docker mounts at ``/root/.qlib``;
 * every run gets the crypto settings (data directory, pool, benchmark, costs, time segments), which
-  replace the CN time segments the upstream runners pass.
+  replace the CN time segments the qlib runners pass.
 """
 
+import re
 from pathlib import Path
 
+import pandas as pd
+
 from rdagent.components.coder.model_coder.conf import MODEL_COSTEER_SETTINGS
+from rdagent.core.experiment import FBWorkspace
+from rdagent.log import rdagent_logger as logger
 from rdagent.scenarios.crypto.qlib.conf import CRYPTO_QLIB_SETTINGS, CryptoQlibSettings
-from rdagent.scenarios.qlib.experiment.workspace import QlibFBWorkspace
 from rdagent.utils.env import DockerEnv, QlibCondaConf, QlibCondaEnv, QTDockerEnv
 
 HERE = Path(__file__).parent
@@ -72,16 +78,51 @@ def last_test_day(settings: CryptoQlibSettings = CRYPTO_QLIB_SETTINGS) -> str:
     return days[-2]
 
 
-class CryptoQlibFBWorkspace(QlibFBWorkspace):
-    def qlib_env(self):
-        return crypto_qlib_env()
+TRAINING_LOG = re.compile(r"(Epoch\d+: train -[0-9\.]+, valid -[0-9\.]+|best score: -[0-9\.]+ @ \d+ epoch)")
+"""The lines of the qrun log the feedback reads: the losses of each epoch and the best score."""
 
-    def execute(self, qlib_config_name: str = "conf.yaml", run_env: dict = {}, *args, **kwargs):
-        """Run a workflow config with the crypto settings in place of the runner's segments. The end
-        of the test segment is always set: the runner would otherwise pass its own (CN) one."""
-        env = {**run_env, **CRYPTO_QLIB_SETTINGS.run_env()}
+
+class CryptoQlibFBWorkspace(FBWorkspace):
+    """A workflow config template folder, run on the crypto data with ``qrun``."""
+
+    def __init__(self, template_folder_path: Path, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.inject_code_from_folder(template_folder_path)
+
+    def execute(
+        self, qlib_config_name: str = "conf.yaml", run_env: dict | None = None, *args, **kwargs
+    ) -> tuple[pd.Series | None, str]:
+        """Run a workflow config and read its metrics.
+
+        The crypto settings replace the segments in ``run_env`` the runner passes; the end of the test
+        segment is always set, since the runner would otherwise pass its own (CN) one. Returns the
+        metrics of the latest recorder and the training lines of the log, or None and the whole log
+        when the run wrote no results.
+        """
+        env = {**(run_env or {}), **CRYPTO_QLIB_SETTINGS.run_env()}
         env["test_end"] = CRYPTO_QLIB_SETTINGS.test_end or last_test_day()
-        return super().execute(qlib_config_name, env, *args, **kwargs)
+        qlib = crypto_qlib_env()
+        if qlib is None:
+            logger.error(f"Unknown env_type: {MODEL_COSTEER_SETTINGS.env_type}")
+            return None, "Unknown environment type"
+        qlib.prepare()
+
+        log = qlib.check_output(local_path=str(self.workspace_path), entry=f"qrun {qlib_config_name}", env=env)
+        logger.log_object(log, tag="Qlib_execute_log")
+        qlib.check_output(local_path=str(self.workspace_path), entry="python read_exp_res.py", env=env)
+
+        returns = self.workspace_path / "ret.parquet"
+        if not returns.exists():
+            logger.error("No result file found.")
+            return None, log
+        logger.log_object(pd.read_parquet(returns), tag="Quantitative Backtesting Chart")
+
+        metrics = self.workspace_path / "qlib_res.csv"
+        if not metrics.exists():
+            logger.error(f"File {metrics} does not exist.")
+            return None, log
+        # The run succeeded: keep only the training lines of the log.
+        return pd.read_csv(metrics, index_col=0).iloc[:, 0], "\n".join(TRAINING_LOG.findall(log))
 
 
 __all__ = [

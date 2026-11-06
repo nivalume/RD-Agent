@@ -74,7 +74,11 @@ def data_root(tmp_path):
 
 @pytest.fixture
 def scenario(data_root) -> CryptoStrategyScenario:
-    return CryptoStrategyScenario(with_runtime_environment=False, data_root_dir=data_root)
+    return CryptoStrategyScenario(
+        with_runtime_environment=False,
+        data_root_dir=data_root,
+        available_schemas=["market.crypto.bar.v1.json"],
+    )
 
 
 @pytest.fixture
@@ -85,6 +89,25 @@ def hypothesis_gen(scenario) -> CryptoStrategyHypothesisGen:
 @pytest.fixture
 def hypothesis(hypothesis_gen) -> Hypothesis:
     return hypothesis_gen.convert_response(json.dumps(HYPOTHESIS_RESPONSE))
+
+
+def test_the_scenario_describes_only_the_configured_schema_files(tmp_path, monkeypatch):
+    monkeypatch.delenv("QLIB_FACTOR_AVAILABLE_SCHEMAS", raising=False)
+    (tmp_path / "schemas").mkdir()
+    for name, slug in (
+        ("binance.vision.market.crypto.bar.raw.v1.json", "binance.vision.crypto.bar.raw"),
+        ("market.crypto.bar.v1.json", "market.crypto.bar"),
+    ):
+        (tmp_path / "schemas" / name).write_text(
+            json.dumps({"slug": slug, "version": 1, "name": slug, "columns": [{"name": "close", "type": "float"}]}),
+            encoding="utf-8",
+        )
+    (tmp_path / "crypto" / "data" / "crypto_bar").mkdir(parents=True)
+
+    described = CryptoStrategyScenario(with_runtime_environment=False, data_root_dir=tmp_path).get_source_data_desc()
+
+    assert "binance.vision.crypto.bar.raw" in described
+    assert "market.crypto.bar" not in described
 
 
 def test_gen_is_overridden(hypothesis_gen):
@@ -140,11 +163,10 @@ def test_gen_prompts_carry_the_scenario_and_the_trace(scenario, hypothesis_gen):
         generated = hypothesis_gen.gen(trace)
 
     user_prompt, system_prompt = backend.return_value.build_messages_and_create_chat_completion.call_args.args
-    assert "Crypto assets traded on centralized exchanges" in system_prompt
+    assert "linear perpetual futures on centralized exchanges" in system_prompt
     assert "The clock:" in system_prompt
     assert "market.crypto.bar" in system_prompt
-    assert "What every proposal must state" in system_prompt
-    assert "Do not name any instrument, token, exchange, country, date, year" in system_prompt
+    assert "What Every Proposal Must State" in system_prompt
     # The factor path's framing must not leak into a strategy prompt.
     assert "The factor is a characteristic" not in system_prompt
     assert "# Trial 1:" in user_prompt
@@ -270,6 +292,18 @@ def test_the_task_brief_information_carries_the_economic_logic():
     assert "return_source: the liquidated crowd pays the spread" in brief
     assert "signal: $$d_t = r_t / \\sigma_t$$" in brief
     assert "parameters: " in brief
+
+
+def test_the_system_prompt_states_the_source_of_return_and_its_limits(scenario, hypothesis_gen):
+    system_prompt, _user_prompt = hypothesis_gen.render_prompts(
+        hypothesis_gen.prepare_context(Trace(scen=scenario))[0],
+    )
+    normalized = " ".join(system_prompt.split())
+
+    assert "A statistical description alone is not a mechanism." in normalized
+    for heading in ("**Return source**", "**Counterparty**", "**Limits to arbitrage**", "**Invalidation**"):
+        assert heading in system_prompt
+    assert "Do not give the condition in LaTeX at this stage." in system_prompt
 
 
 def test_the_strategy_prompts_name_no_instrument():

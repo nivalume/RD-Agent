@@ -4,10 +4,22 @@ RD-Agent 的 qlib 循环（提出假设 → 写代码 → 在 qlib 上训练回�
 
 - 数据：`jarvis-history qlib` 写出的 qlib 数据目录。全部 USDT 本位永续（含已下架），每个 UTC 日一行；
   `top<N>` 标的池每月初按此前 30 天的平均成交额选出，没有前视。
-- 场景描述：市场与日历用 `rdagent/scenarios/crypto/experiment/prompts.yaml` 里的加密货币 prompt
-  （`crypto_market`、`crypto_quant_background`、`crypto_quant_calendar`），评估设定（标的池、标签、模型、
-  回测、成本）在本目录的 `prompts.yaml`。
-- 因子提案用 `CryptoFactorHypothesisGen` 和加密货币因子 prompt；模型提案、coder、runner、feedback 用 qlib 的。
+- 场景：`CryptoQlibFactorScenario`、`CryptoQlibModelScenario`、`CryptoQlibQuantScenario` 是本包自己的类，
+  直接继承 `rdagent.core.scenario.Scenario`，不继承 qlib 的场景类。prompt 分两部分：
+  - 与市场无关的部分直接用 qlib 的模板：因子和模型的代码接口、模型输出格式、rich style 描述，以及因子数据
+    目录的描述（`get_data_folder_intro`）。
+  - 与加密货币有关的部分用自己的：市场与日历用 `rdagent/scenarios/crypto/experiment/prompts.yaml`
+    （`crypto_market`、`crypto_quant_background`、`crypto_quant_calendar`）；评估设定（标的池、标签、模型、
+    回测、成本）、simulator、实验设定和因子输出示例（`BTCUSDT`、每个 UTC 日一行）在本目录的 `prompts.yaml`。
+- 实验类仍是 qlib 的子类（`CryptoQlibFactorExperiment(QlibFactorExperiment)` 等）：qlib 的 runner 用
+  `isinstance` 从 `based_experiments` 里挑出 SOTA 因子和模型。
+- workspace：`CryptoQlibFBWorkspace` 直接继承 `FBWorkspace`，自己实现 `execute`（`qrun` 一个配置，再用
+  `read_exp_res.py` 读结果），流程与 qlib 的 workspace 相同，qlib 的 runner 照常调用。
+- 提案：因子用 `CryptoFactorHypothesisGen` 和加密货币因子 prompt；模型的假设到实验转换
+  `CryptoQlibModelHypothesis2Experiment` 直接继承 components 的 `ModelHypothesis2Experiment`，prompt 用 qlib
+  的模板。模型和 quant 的假设生成、coder、runner、feedback 由 loop 配置直接使用 qlib 的类。
+- qlib 的 feedback 用 `isinstance(scen, QlibQuantScenario)` 选 quant 的 prompt，所以 `CryptoQlibQuantScenario`
+  用 `QlibQuantScenario.register` 声明自己满足这个接口，但不继承它的代码。
 - 工作流配置 `factor_template/`、`model_template/` 由 qlib 的配置生成，只改了：数据目录、标的池、基准
   （BTCUSDT）、日期、无涨跌停、Taker 手续费、`min_cost: 0`、topk/n_drop、年化按 365 天。
 
@@ -58,10 +70,10 @@ python -m rdagent.scenarios.crypto.qlib.experiment factor     # 只打印场景 
 | 文件 | 内容 |
 | --- | --- |
 | `conf.py` | `CryptoQlibSettings`（`CRYPTO_QLIB_` 环境变量） |
-| `workspace.py` | `CryptoQlibFBWorkspace`：选 docker/conda、检查数据、每次运行注入加密货币设定 |
+| `workspace.py` | `CryptoQlibFBWorkspace`（自己的 `FBWorkspace`）：选 docker/conda、检查数据、每次运行注入加密货币设定、读结果 |
 | `data.py` | 生成因子 coder 读的 `daily_pv.h5` |
-| `experiment.py` | 实验类和 factor/model/quant 三个场景 |
-| `proposal.py` | 假设到实验的转换 |
+| `experiment.py` | 实验类（qlib 实验的子类）和 factor/model/quant 三个场景（自己的 `Scenario`） |
+| `proposal.py` | 假设到实验的转换（因子沿用加密货币因子提案，模型基于 components 的 `ModelHypothesis2Experiment`） |
 | `rdagent/app/crypto_rd_loop/qlib.py`、`qlib_conf.py` | 三个循环的入口和配置 |
 
-对上游 qlib 代码只有一处改动：`QlibFBWorkspace.qlib_env()`，让场景可以换掉运行环境（docker 模式下不再下载 CN 数据）。
+不改上游 qlib 代码：docker 模式不下载 CN 数据，是由本包的 `CryptoQTDockerEnv` 实现的。

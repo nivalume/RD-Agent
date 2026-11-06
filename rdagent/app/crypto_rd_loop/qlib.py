@@ -1,7 +1,7 @@
 """Crypto cross-sectional factor and model mining on qlib.
 
-The loops are the qlib ones (propose, code, run on qlib, feedback) on the crypto scenario of
-:mod:`rdagent.scenarios.crypto.qlib`::
+The loops are this app's own (:mod:`rdagent.app.crypto_rd_loop.qlib_loops`): propose, code, run on
+qlib, feedback, on the crypto scenario of :mod:`rdagent.scenarios.crypto.qlib`::
 
     python -m rdagent.app.crypto_rd_loop.qlib factor --loop_n 5    # factors, with LightGBM
     python -m rdagent.app.crypto_rd_loop.qlib model --loop_n 5     # models, on the base features
@@ -31,15 +31,17 @@ from rdagent.app.crypto_rd_loop.qlib_conf import (  # noqa: E402
     CryptoQlibModelPropSetting,
     CryptoQlibQuantPropSetting,
 )
-from rdagent.app.qlib_rd_loop.factor import FactorRDLoop  # noqa: E402
-from rdagent.app.qlib_rd_loop.model import ModelRDLoop  # noqa: E402
-from rdagent.app.qlib_rd_loop.quant import QuantRDLoop  # noqa: E402
+from rdagent.app.crypto_rd_loop.qlib_loops import (  # noqa: E402
+    CryptoQlibFactorRDLoop,
+    CryptoQlibModelRDLoop,
+    CryptoQlibQuantRDLoop,
+)
 from rdagent.scenarios.crypto.qlib.data import use_crypto_factor_data  # noqa: E402
 
 LOOPS = {
-    "factor": (FactorRDLoop, CryptoQlibFactorPropSetting),
-    "model": (ModelRDLoop, CryptoQlibModelPropSetting),
-    "quant": (QuantRDLoop, CryptoQlibQuantPropSetting),
+    "factor": (CryptoQlibFactorRDLoop, CryptoQlibFactorPropSetting),
+    "model": (CryptoQlibModelRDLoop, CryptoQlibModelPropSetting),
+    "quant": (CryptoQlibQuantRDLoop, CryptoQlibQuantPropSetting),
 }
 
 

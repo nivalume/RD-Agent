@@ -65,6 +65,29 @@ crypto_qlib_quant_background: |-
   {{ runtime_environment }}
   {% endif %}
 
+crypto_qlib_factor_output_format: |-
+  Your output should be a pandas dataframe similar to the following example information:
+  <class 'pandas.core.frame.DataFrame'>
+  MultiIndex: 72900 entries, (Timestamp('2023-01-01 00:00:00'), 'BTCUSDT') to (Timestamp('2024-12-31 00:00:00'), 'XRPUSDT')
+  Data columns (total 1 columns):
+  #   Column            Non-Null Count  Dtype
+  ---  ------            --------------  -----
+  0   your factor name  72900 non-null  float64
+  dtypes: float64(1)
+  memory usage: <ignore>
+  Notice: The non-null count is OK to be different to the total number of entries since some instruments may not have the factor value on some days (before enough history, or after a delisting).
+  One possible format of `result.h5` may be like following:
+  datetime    instrument
+  2024-01-06  BTCUSDT      -0.001796
+              DOGEUSDT      0.005780
+              ETHUSDT       0.004228
+              SOLUSDT       0.001298
+              XRPUSDT       0.005330
+                              ...
+  2024-12-31  ETHUSDT       0.000000
+              SOLUSDT       0.002459
+  Every UTC day is a row, Saturdays and Sundays included; an instrument is named by its Binance symbol.
+
 crypto_qlib_factor_simulator: |-
   The factors will be sent into Qlib to train a model that predicts the next days' returns of crypto perpetuals from the factor values of the previous days.
   User will use Qlib to automatically do the following things:

@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -16,7 +17,9 @@ from rdagent.app.crypto_rd_loop.qlib_conf import (
 )
 from rdagent.components.coder.factor_coder.config import FACTOR_COSTEER_SETTINGS
 from rdagent.components.coder.model_coder.conf import MODEL_COSTEER_SETTINGS
-from rdagent.core.proposal import Hypothesis, Trace
+from rdagent.components.coder.model_coder.model import ModelTask
+from rdagent.core.proposal import Hypothesis, HypothesisFeedback, Trace
+from rdagent.core.scenario import Scenario
 from rdagent.scenarios.crypto.qlib import conf as crypto_conf
 from rdagent.scenarios.crypto.qlib import experiment as crypto_experiment
 from rdagent.scenarios.crypto.qlib import workspace as crypto_workspace
@@ -38,9 +41,18 @@ from rdagent.scenarios.crypto.qlib.workspace import (
     CryptoDataMissing,
     CryptoQlibFBWorkspace,
     CryptoQTDockerEnv,
+    crypto_qlib_env,
     require_data,
 )
+from rdagent.scenarios.qlib.developer import feedback as qlib_feedback
+from rdagent.scenarios.qlib.experiment.factor_experiment import QlibFactorScenario
+from rdagent.scenarios.qlib.experiment.model_experiment import QlibModelScenario
+from rdagent.scenarios.qlib.experiment.quant_experiment import QlibQuantScenario
 from rdagent.scenarios.qlib.experiment.workspace import QlibFBWorkspace
+from rdagent.scenarios.qlib.proposal.model_proposal import (
+    QlibModelHypothesis2Experiment,
+)
+from rdagent.utils.agent.tpl import T
 from rdagent.utils.env import QlibCondaEnv
 
 CONFIGS = sorted([*FACTOR_TEMPLATE.glob("*.yaml"), *MODEL_TEMPLATE.glob("*.yaml")])
@@ -136,28 +148,62 @@ def data_home(tmp_path, monkeypatch):
 @pytest.mark.parametrize("env_type,expected", [("docker", CryptoQTDockerEnv), ("conda", QlibCondaEnv)])
 def test_both_environments_are_offered(env_type, expected, data_home, monkeypatch):
     monkeypatch.setattr(MODEL_COSTEER_SETTINGS, "env_type", env_type)
-    assert isinstance(CryptoQlibFBWorkspace(template_folder_path=FACTOR_TEMPLATE).qlib_env(), expected)
+    assert isinstance(crypto_qlib_env(), expected)
     monkeypatch.setattr(MODEL_COSTEER_SETTINGS, "env_type", "nothing")
-    assert CryptoQlibFBWorkspace(template_folder_path=FACTOR_TEMPLATE).qlib_env() is None
+    assert crypto_qlib_env() is None
+    result, log = CryptoQlibFBWorkspace(template_folder_path=FACTOR_TEMPLATE).execute("conf_baseline.yaml")
+    assert result is None and log == "Unknown environment type"
+
+
+class FakeQlib:
+    """The qlib environment: records each command and, when asked to, writes the results."""
+
+    LOG = "[1:MainThread] loading data\nEpoch1: train -0.95, valid -0.97\nbest score: -0.97 @ 1 epoch\ndone"
+
+    def __init__(self, writes_results: bool) -> None:
+        self.writes_results = writes_results
+        self.runs: list[tuple[str, dict]] = []
+
+    def prepare(self) -> None:
+        pass
+
+    def check_output(self, local_path: str, entry: str, env: dict) -> str:
+        self.runs.append((entry, env))
+        if entry == "python read_exp_res.py" and self.writes_results:
+            pd.Series({"IC": 0.05, "Rank IC": 0.04}).to_csv(Path(local_path) / "qlib_res.csv")
+            pd.DataFrame({"return": [0.01, -0.02]}).to_parquet(Path(local_path) / "ret.parquet")
+        return self.LOG
 
 
 def test_every_run_gets_the_crypto_settings(data_home, monkeypatch):
-    seen = {}
-
-    def execute(self, qlib_config_name="conf.yaml", run_env={}, *args, **kwargs):
-        seen.update(run_env)
-        return None, ""
-
-    monkeypatch.setattr(QlibFBWorkspace, "execute", execute)
+    qlib = FakeQlib(writes_results=False)
+    monkeypatch.setattr(crypto_workspace, "crypto_qlib_env", lambda: qlib)
     workspace = CryptoQlibFBWorkspace(template_folder_path=FACTOR_TEMPLATE)
-    # The upstream runner passes the CN segments; the crypto ones replace them.
+    # The qlib runner passes the CN segments; the crypto ones replace them.
     runner_env = {"train_start": "2008-01-01", "test_end": "2020-08-01", "feature_names": "[]"}
-    workspace.execute("conf_baseline.yaml", runner_env)
+    result, log = workspace.execute("conf_baseline.yaml", runner_env)
+    assert [entry for entry, _ in qlib.runs] == ["qrun conf_baseline.yaml", "python read_exp_res.py"]
+    seen = qlib.runs[0][1]
     assert seen["train_start"] == "2021-01-01" and seen["feature_names"] == "[]"
     assert seen["crypto_market"] == "top100"
     # No test end set: the backtest ends the day before the last of the calendar, never the
     # runner's CN date.
     assert seen["test_end"] == "2023-12-31"
+    assert runner_env["test_end"] == "2020-08-01"  # the runner's dict is left alone
+    # Without results the whole log goes back to the runner.
+    assert result is None and log == FakeQlib.LOG
+
+
+def test_a_run_returns_its_metrics_and_training_log(data_home, monkeypatch):
+    monkeypatch.setattr(crypto_workspace, "crypto_qlib_env", lambda: FakeQlib(writes_results=True))
+    result, log = CryptoQlibFBWorkspace(template_folder_path=MODEL_TEMPLATE).execute("conf_baseline_factors_model.yaml")
+    assert result.to_dict() == {"IC": 0.05, "Rank IC": 0.04}
+    assert log == "Epoch1: train -0.95, valid -0.97\nbest score: -0.97 @ 1 epoch"
+
+
+def test_the_workspace_and_the_model_proposal_do_not_inherit_qlib():
+    assert QlibFBWorkspace not in CryptoQlibFBWorkspace.__mro__
+    assert QlibModelHypothesis2Experiment not in CryptoQlibModelHypothesis2Experiment.__mro__
 
 
 def test_the_experiments_run_the_crypto_templates():
@@ -243,6 +289,139 @@ def test_the_model_and_quant_scenarios(factor_tables):
     assert "develop new models" in quant.background("model")
     assert "the `top100` pool" in quant.simulator("model")
     assert "Binance USD-M USDT perpetuals" in quant.experiment_setting
+
+
+def test_the_scenarios_are_crypto_ones_on_the_qlib_templates(factor_tables):
+    for cls, qlib_cls in (
+        (CryptoQlibFactorScenario, QlibFactorScenario),
+        (CryptoQlibModelScenario, QlibModelScenario),
+        (CryptoQlibQuantScenario, QlibQuantScenario),
+    ):
+        assert issubclass(cls, Scenario) and qlib_cls not in cls.__mro__
+    qlib = "scenarios.qlib.experiment.prompts"
+    factor, model, quant = CryptoQlibFactorScenario(), CryptoQlibModelScenario(), CryptoQlibQuantScenario()
+    # The market-free templates are the qlib ones ...
+    assert factor.interface == T(f"{qlib}:qlib_factor_interface").r()
+    assert model.interface == T(f"{qlib}:qlib_model_interface").r()
+    assert model.output_format == T(f"{qlib}:qlib_model_output_format").r()
+    assert quant.interface("model").endswith(T(f"{qlib}:qlib_model_interface").r())
+    # ... the example of a factor's output is the crypto one.
+    assert "BTCUSDT" in factor.output_format and "SH600000" not in factor.output_format
+    assert "BTCUSDT" in quant.output_format("factor")
+    assert "result.h5" in factor.get_scenario_all_desc()
+
+
+def test_the_quant_scenario_answers_every_tag(factor_tables):
+    quant = CryptoQlibQuantScenario()
+    # The model coder's evaluators ask with the model type.
+    for tag in ("TimeSeries", "Tabular", "model"):
+        desc = quant.get_scenario_all_desc(filtered_tag=tag)
+        assert "develop new models" in desc and "class Net" in desc and "result.h5" not in desc
+    assert "result.h5" in quant.get_scenario_all_desc(filtered_tag="feature")
+    assert "develop new models" in quant.get_scenario_all_desc(action="model")
+    whole = quant.get_scenario_all_desc()
+    assert "develop new factors and models" in whole and "class Net" in whole
+    assert quant.get_scenario_all_desc(filtered_tag="feedback") == whole
+
+
+def test_the_runtime_environment_is_read_once(monkeypatch):
+    import rdagent.scenarios.crypto.qlib.experiment as module
+
+    calls = []
+    monkeypatch.setattr(module, "get_runtime_environment_by_env", lambda env: calls.append(env) or "python 3.10")
+    monkeypatch.setattr(module, "get_factor_env", lambda: "factor env")
+    monkeypatch.setattr(module, "get_model_env", lambda: "model env")
+    quant = CryptoQlibQuantScenario.__new__(CryptoQlibQuantScenario)
+    quant._runtime_environment = {}
+    for _ in range(3):
+        quant.get_runtime_environment()
+        quant.get_runtime_environment(tag="model")
+    assert calls == ["factor env", "model env"]
+
+
+def test_a_quant_round_gets_the_model_prompts(factor_tables, monkeypatch):
+    quant = CryptoQlibQuantScenario()
+    assert isinstance(quant, QlibQuantScenario)  # registered, not inherited
+    assert not isinstance(CryptoQlibFactorScenario(), QlibQuantScenario)
+    hypothesis = Hypothesis("A smaller GRU", "", "", "", "", "")
+    trace = Trace(scen=quant)
+    context, _ = CryptoQlibModelHypothesis2Experiment().prepare_context(hypothesis, trace)
+    assert context["scenario"] == quant.get_scenario_all_desc(action="model")
+
+    prompts = []
+
+    class Backend:
+        def build_messages_and_create_chat_completion(self, user_prompt, system_prompt, **kwargs):
+            prompts.append(system_prompt)
+            answer = {"Observations": "", "Feedback for Hypothesis": "", "New Hypothesis": "", "Reasoning": ""}
+            return json.dumps({**answer, "Decision": True})
+
+    monkeypatch.setattr(qlib_feedback, "APIBackend", Backend)
+    task = ModelTask(
+        name="GRU",
+        description="a GRU",
+        formulation="h_t = GRU(x_t, h_{t-1})",
+        architecture="one layer",
+        variables={},
+        hyperparameters={},
+        training_hyperparameters={},
+        model_type="TimeSeries",
+    )
+    experiment = CryptoQlibModelExperiment(sub_tasks=[task], hypothesis=hypothesis)
+    experiment.result = pd.Series(0.1, index=qlib_feedback.IMPORTANT_METRICS)
+    experiment.sub_workspace_list = [SimpleNamespace(file_dict={"model.py": "model_cls = None"})]
+    feedback = qlib_feedback.QlibModelExperiment2Feedback(quant).generate_feedback(experiment, trace)
+    # The model feedback prompt, whose answer carries the "Decision" the feedback reads.
+    assert feedback.decision is True
+    assert all("quantitative analysis assistant" in prompt and "develop new models" in prompt for prompt in prompts)
+
+
+MODEL_ANSWER = {
+    "description": "a GRU",
+    "formulation": "h_t = GRU(x_t, h_{t-1})",
+    "architecture": "one layer",
+    "variables": {},
+    "hyperparameters": {},
+    "training_hyperparameters": {"n_epochs": 10},
+}
+
+
+def round_of(action: str, decision: bool, name: str):
+    hypothesis = Hypothesis(f"{action} idea {name}", "", "", "", "", "")
+    hypothesis.action = action
+    cls = CryptoQlibModelExperiment if action == "model" else CryptoQlibFactorExperiment
+    experiment = cls(sub_tasks=[], hypothesis=hypothesis)
+    experiment.stdout = f"log of {name}"
+    feedback = HypothesisFeedback(
+        observations=f"observed {name}", hypothesis_evaluation="", new_hypothesis="", reason="", decision=decision
+    )
+    return experiment, feedback
+
+
+def test_the_model_proposal_renders_the_qlib_context(factor_tables):
+    """The crypto conversion gives the context the qlib one gives, on a quant trace of both kinds."""
+    quant = CryptoQlibQuantScenario()
+    hypothesis = Hypothesis("A smaller GRU", "", "", "", "", "")
+    rounds = [
+        round_of("model", True, "m1"),
+        round_of("factor", True, "f1"),
+        round_of("model", False, "m2"),
+        round_of("factor", False, "f2"),
+    ]
+    for hist in ([], rounds[1:2], rounds):
+        trace = Trace(scen=quant)
+        trace.hist = list(hist)
+        ours, _ = CryptoQlibModelHypothesis2Experiment().prepare_context(hypothesis, trace)
+        theirs, _ = QlibModelHypothesis2Experiment().prepare_context(hypothesis, trace)
+        assert ours == theirs
+    assert ours["hypothesis_and_feedback"].index("m2") < ours["hypothesis_and_feedback"].index("m1")
+    assert "f1" not in ours["hypothesis_and_feedback"]
+    assert "m2" in ours["last_hypothesis_and_feedback"] and "m1" in ours["SOTA_hypothesis_and_feedback"]
+    experiment = CryptoQlibModelHypothesis2Experiment().convert_response(
+        json.dumps({"GRU": {**MODEL_ANSWER, "model_type": "TimeSeries"}}), hypothesis, trace
+    )
+    # Every accepted round, the factor one too: the model runner takes the SOTA factors from them.
+    assert experiment.based_experiments == [rounds[0][0], rounds[1][0]]
 
 
 def test_the_loops_wire_the_crypto_classes():

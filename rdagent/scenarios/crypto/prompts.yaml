@@ -100,89 +100,50 @@ strategy_hypothesis_gen_system_prompt: |
 
   {{ scenario }}
 
-  ## Price-Path Mechanisms in Scope
-
-  | Phenomenon      | Definition                                                                                                                                                                                                                                                                              | Typical economic frictions                                                                                                                                             |
-  | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | Mean reversion  | The conditional expectation of future returns is negatively related to recent returns: after a displacement, the expected price path partially reverses toward a short- or medium-term equilibrium. Formally, `\operatorname{Cov}(r_{t,t+h}, r_{t-k,t}) < 0` for the relevant horizons. | Liquidation cascades that force price beyond flow equilibrium; stop-run overshoot followed by partial recovery once forced orders are cleared.                         |
-  | Trend following | The conditional expectation of future returns is positively related to recent returns: a displacement is expected to continue rather than reverse. Formally, `\operatorname{Cov}(r_{t,t+h}, r_{t-k,t}) > 0` for the relevant horizons.                                                  | Slow arrival of capital that continues to respond to the initial move; herding of leveraged participants who add to positions only after the move is already underway. |
-  When the funding rate is among the datasets above, use its level and its change as a state variable. The
-  return you trade must still come from a reversion or a continuation of price: harvesting funding on its
-  own, calendar spreads, options, and cross-sectional long/short books are out of scope.
-
   ## What Every Proposal Must State
 
-  1. **Mechanism**\
+  1. **Mechanism**
      The specific economic friction that produces the price path. Name the friction (liquidation cascade,
      stop clustering, slow capital arrival, inventory pressure, etc.) and the exact price path it generates
      (overshoot then partial give-back, or under-reaction then continuation). A statistical description
      alone is not a mechanism.
 
-  2. **Counterparty**\
-     Who is on the other side of the trade and why they lose. Identify the agent (levered retail being
-     liquidated, stop orders being run, market makers hedging inventory, slow flow still arriving) and the
-     constraint that forces them to trade at an unfavorable price.
+  2. **Return source**
+     Classify the expected excess return as exactly one of: a risk premium, a behavioral bias, or a
+     structural constraint or friction. Name the channel through which it is earned. A description of the
+     return distribution is not a source of return.
 
-  3. **Persistence**\
-     Why the transfer is not arbitraged away immediately. State the capital, risk, funding, or liquidity
-     constraint that prevents the edge from being competed to zero (position limits, funding cost of the
-     hedge, the edge existing precisely when liquidity disappears, etc.).
+  3. **Counterparty**
+     Identify the counterparty and the constraint under which that party transacts at an unfavorable
+     price. A proposal that cannot name the party transferring the return is incomplete.
 
-  4. **Risk borne**\
-     The state the strategy is short. Explicitly state the market condition under which the strategy loses
-     money (strong trend days and gap risk for reversion; range-bound whipsaw for trend following). The
-     strategy must be short some identifiable risk, not riskless.
+  4. **Limits to arbitrage**
+     State the limit that prevents the transfer from being competed away. The binding limit is one of: a
+     capital constraint, a leverage or margin constraint, a horizon mismatch, a regulatory or mandate
+     restriction, insufficient capacity, or an opportunity outside the investment universe of large
+     institutions. An appeal to market inefficiency is not a limit to arbitrage.
 
-  5. **Falsifiable prediction**\
-     A conditional forward-return statement that data can reject. Specify:
-     - the state variable and threshold (in units of the instrument’s own recent volatility or range),
-     - the sign and rough magnitude of the expected return over the holding period (expressed in volatility
-       units),
-     - the horizon in bars over which the effect is expected to decay.
-     “Prices tend to revert” or “momentum exists” is not a prediction.
-
-  6. **Failure state**\
-     The market condition under which the named friction disappears or reverses, so the mechanism stops
-     working. This must be observable from the same data used to construct the signal.
-
-  **Simplicity constraint**\
-  The mechanism must be expressible with one primary state variable computed from bar fields (and funding
-  rate only as a secondary state). Do not stack conditions until the single-state version has been stated.
-
-  ====== Constraints ======
-  - Do not name any instrument, token, exchange, country, date, year or historical episode, and do not
-    reason from a specific episode. The mechanism must hold in any period.
-  - Time is measured in bars, never in dates: a lookback is N bars, a holding period is h bars.
-  - Every parameter is dimensionless or in units of the instrument's own recent volatility: a z-score
-    threshold, a multiple of realised volatility or ATR, a fraction of a rolling range. Never a price
-    level, never a currency amount, never a calendar window.
-  - Do not fit: give the mechanism's reason for a parameter value, keep the number of free parameters
-    small, and prefer a threshold that has an interpretation.
-  - Use the data described above and nothing else: no news, no order book, no on-chain data, no options,
-    no other instrument.
-  - State the expected holding period and a rough trade count.
-
-  ====== The trace ======
-  Read the trace: which mechanisms were accepted, which were rejected and why, and what the feedback says
-  about the mechanism rather than the parameters. Improve the mechanism or change it, and do not re-propose
-  what the trace already lists unless you can state exactly what is different.
-
+  5. **Invalidation**
+     State in advance, in prose, the market state in which the named source of return ceases or reverses.
+     The state is observable in the same bar fields used to form the signal, with the funding rate only as
+     a secondary state. Do not give the condition in LaTeX at this stage. A generic reference to stress or
+     crisis is not an invalidation condition.
   {% if user_instruction %}
   **User's overall instruction:**
   {{ user_instruction }}
   {% endif %}
 
-  ====== Output format ======
+  ## Output format
   {{ hypothesis_output_format }}
 
-  ====== Specification ======
+  ## Specification
   {{ hypothesis_specification }}
 
 strategy_hypothesis_output_format: |-
   The output should follow JSON format. The schema is as follows:
   {
-  "hypothesis": "The economic mechanism, the state it trades against, the rule it implies, and who is on the other side of it. Limit in two or three sentences.",
-  "reason": "Why this mechanism should produce a tradeable edge here: the counterparty, why the transfer persists, the risk the strategy bears and the prediction that would falsify it. It should be comprehensive and logical. Limit in three or four sentences.",
+  "hypothesis": "The economic mechanism, the state it trades against, and the rule it implies. Limit in two or three sentences.",
+  "reason": "Why this mechanism should produce a tradeable excess return: the return source, the counterparty and the constraint under which they transact, the limit to arbitrage, and the invalidation condition. It should be comprehensive and logical. Limit in three or four sentences.",
   "concise_reason": "A one-sentence reason for the knowledge base.",
   "concise_observation": "A one-sentence observation from the previous experiments that motivates the hypothesis.",
   "concise_justification": "A one-sentence justification of why the mechanism should hold in this market.",
@@ -222,14 +183,14 @@ strategy_experiment_output_format: |-
           "description": "one line: the phenomenon and the rule, e.g. [Mean Reversion] Buys a displacement back after a leverage cascade.",
           "phenomenon": "exactly one of mean_reversion or trend_following",
           "mechanism": "the friction that produces the return, in one phrase",
-          "return_source": "who pays this strategy, and why that transfer keeps happening",
-          "risk_borne": "the market state in which the strategy loses, and how it is recognised",
+          "return_source": "exactly one of risk premium, behavioral bias, or structural constraint or friction, and the channel through which the excess return is earned",
+          "risk_borne": "the state, within the invalidation condition, in which the strategy bears a loss, and how that state is recognised",
           "signal": "LaTeX of the state variable the rule reads",
           "position": "LaTeX of the target position: bounded and normalised",
           "horizon": "when to enter, when to exit and how often to rebalance, in bars",
-          "gate": "LaTeX of the condition that forces the position to zero, or the word none",
+          "gate": "LaTeX of the invalidation condition, the same state as fails_when, forcing the position to zero; the word none only when that state cannot be read from these fields",
           "testable_prediction": "what the data should show if the mechanism is real: the sign, a rough size and the decay of the conditional forward return",
-          "fails_when": "the state in which the mechanism must stop working",
+          "fails_when": "the invalidation stated in the hypothesis, in prose: the market state in which the source of return ceases or reverses",
           "parameters": {
               "parameter or symbol name": "what it is, and its unit or the range it lives in"
           }

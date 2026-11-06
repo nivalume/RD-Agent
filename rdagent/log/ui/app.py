@@ -24,6 +24,11 @@ from rdagent.core.scenario import Scenario
 from rdagent.log.base import Message
 from rdagent.log.storage import FileStorage
 from rdagent.log.ui.qlib_report_figure import report_figure
+from rdagent.scenarios.crypto.qlib.experiment import (
+    CryptoQlibFactorScenario,
+    CryptoQlibModelScenario,
+    CryptoQlibQuantScenario,
+)
 from rdagent.scenarios.general_model.scenario import GeneralModelScenario
 from rdagent.scenarios.kaggle.experiment.scenario import KGScenario
 from rdagent.scenarios.qlib.experiment.factor_experiment import QlibFactorScenario
@@ -66,6 +71,11 @@ SIMILAR_SCENARIOS = (
     QlibFactorFromReportScenario,
     QlibQuantScenario,
     KGScenario,
+    # The crypto scenarios are a Scenario of their own rather than subclasses of the qlib ones,
+    # so they have to be listed here or the app stops at "Unknown Scenario!" for every crypto run.
+    CryptoQlibFactorScenario,
+    CryptoQlibModelScenario,
+    CryptoQlibQuantScenario,
 )
 
 

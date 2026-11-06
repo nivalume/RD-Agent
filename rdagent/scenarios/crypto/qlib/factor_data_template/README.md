@@ -8,9 +8,9 @@ NOTE: **key is always "data" for all hdf5 files **.
 
 # Here is a short description about the data
 
-| Filename       | Description                                                                  |
-| -------------- | -----------------------------------------------------------------------------|
-| "daily_pv.h5"  | Daily bars, funding, open interest and positioning of crypto perpetuals.     |
+| Filename       | Description                                                                |
+| -------------- | ---------------------------------------------------------------------------|
+| "daily_pv.h5"  | Daily bars of crypto perpetuals: prices, volumes, trade counts, funding.    |
 
 The index is a ("datetime", "instrument") MultiIndex. `datetime` is a UTC day: crypto trades every
 day, weekends included, and the value of a day is known at its end (00:00 UTC of the next day).
@@ -18,6 +18,9 @@ day, weekends included, and the value of a day is known at its end (00:00 UTC of
 instruments are every one that was ever in the trading pool, delisted ones included, over their
 whole history: an instrument may have rows before it entered the pool and stops having rows when it
 was delisted. A value the exchange did not publish is NaN.
+
+The table holds prices, volumes and the funding rate. Open interest and long/short ratios are not
+part of it.
 
 # For different data, We have some basic knowledge for them
 
@@ -33,19 +36,11 @@ $count: number of trades of the day.
 $taker_buy_volume: the part of $volume bought by takers (aggressive buyers).
 $taker_buy_amount: the part of $amount bought by takers.
 
-## Funding
-$funding_rate: the funding rates settled during the day, summed (usually three settlements, at
-00:00, 08:00 and 16:00 UTC). Positive: longs paid shorts. A fraction, not a percentage.
-
-## Open interest (from 5-minute snapshots; NaN where not downloaded)
-$open_interest: open interest at the last snapshot of the day, in the base asset.
-$open_interest_value: open interest at the last snapshot of the day, in USDT.
-
-## Positioning (from 5-minute snapshots; NaN where not downloaded)
-$top_trader_account_ls: long/short ratio of the top traders' accounts.
-$top_trader_position_ls: long/short ratio of the top traders' positions.
-$global_account_ls: long/short ratio of all accounts.
-$taker_buy_sell_ratio: taker buy volume over taker sell volume.
+## Funding rate (perpetuals only)
+$funding_rate: the funding settled on that day, summed over its settlements (three for an 8-hour
+funding interval, six for a 4-hour one), as a fraction of the position's value: 0.0003 is 0.03% of
+the position paid by longs to shorts (0.01% per settlement). Negative means shorts paid longs. NaN
+on a day the exchange settled nothing. The column is named `$funding_rate`, dollar sign included.
 
 ## Other
 $factor: always 1: perpetual prices need no adjustment.

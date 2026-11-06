@@ -1,30 +1,46 @@
-"""Run only the crypto hypothesis and hypothesis2experiment stages.
+"""Run the stages of the crypto qlib factor loop up to the point you choose.
 
-The scenario is fixed to crypto perpetual futures: the loop is always built from
-``CRYPTO_PROP_SETTING`` (CryptoFactorScenario / CryptoFactorHypothesisGen /
-CryptoFactorHypothesis2Experiment) and the script exposes no scenario switch and no coding, evaluation
-or backtest. It calls ``CryptoFactorRDLoop.propose()`` and ``CryptoFactorRDLoop.exp_gen()`` directly
-rather than ``loop.run()``, so no session is dumped under ``log/``.
+The loop is always the crypto qlib factor one (``CryptoQlibFactorRDLoop`` built from
+``CryptoQlibFactorPropSetting``: CryptoQlibFactorScenario / CryptoFactorHypothesisGen /
+CryptoQlibFactorHypothesis2Experiment). The script calls ``loop._propose()`` and ``loop._exp_gen()``
+directly rather than ``loop.run()``, so nothing is coded, evaluated or backtested and no session is
+dumped under ``log/``. ``--mode`` says how far to go:
 
-For each of the two stages it prints:
+``prompt``      print the prompts only; the model is not called (the default, and the only mode that
+                needs no API key).
+``hypothesis``  print the prompt, call the model, print the hypothesis it proposes.
+``factor``      print the prompts, call the model for the hypothesis, then call it again to turn the
+                hypothesis into factors, and print those.
+
+The prompts printed are the ones the loop's own classes render and send: the model call is
+intercepted at the backend, so they cannot drift from the real ones. In ``prompt`` mode the
+hypothesis-to-factors prompt needs a hypothesis that does not exist yet, so it is rendered for a
+placeholder one, and says so.
+
+For each stage that runs it prints:
 
 1. the exact system prompt and user prompt sent to the LLM,
-2. the raw LLM response, plus a check of whether it is pure JSON,
+2. the raw LLM response, plus a check of whether it is pure JSON (modes that call the model),
 3. the parsed result (Hypothesis fields, or the generated FactorTasks).
 
 The prompts are recorded before the call, so they are still printed when the LLM request fails (bad
 key, timeout, unparsable JSON, ...).
 
-The data the scenario describes comes from ``CRYPTO_DATA_ROOT_DIR`` (default ``~/jarvis-data``): the
-schemas under ``schemas/`` and the rows under ``crypto/data/``. Without them the prompt simply says no
-data schema is available, which is enough for these two stages.
+Building the scenario needs the crypto qlib setup described in ``rdagent/scenarios/crypto/qlib/README.md``
+(the data under ``~/.qlib/qlib_data/crypto_data`` and ``MODEL_CoSTEER_ENV_TYPE``), in every mode: the
+factor coder's tables are written from it and the factor environment is listed in the prompt.
 
 Usage:
     conda activate rdagent
+    python examples/crypto_factor.py                       # = --mode prompt
     export ARK_API_KEY=...        # .env maps it to OPENAI_API_KEY
-    python examples/crypto_factor.py
+    python examples/crypto_factor.py --mode hypothesis
+    python examples/crypto_factor.py --mode factor
 """
 
+from __future__ import annotations
+
+import argparse
 import json
 import os
 import sys
@@ -51,15 +67,27 @@ os.environ.setdefault("CONDA_DEFAULT_ENV", "rdagent")
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from rdagent.app.crypto_rd_loop.conf import CRYPTO_PROP_SETTING  # noqa: E402
-from rdagent.app.crypto_rd_loop.factor import CryptoFactorRDLoop  # noqa: E402
+from rdagent.app.crypto_rd_loop.qlib_conf import CryptoQlibFactorPropSetting  # noqa: E402
+from rdagent.app.crypto_rd_loop.qlib_loops import CryptoQlibFactorRDLoop  # noqa: E402
+from rdagent.core.proposal import Hypothesis  # noqa: E402
 from rdagent.oai.backend.base import APIBackend as BaseAPIBackend  # noqa: E402
 from rdagent.oai.llm_conf import LLM_SETTINGS  # noqa: E402
-from rdagent.scenarios.crypto.conf import CryptoSettings  # noqa: E402
-from rdagent.scenarios.crypto.experiment.factor_experiment import NO_DATA_SCHEMA  # noqa: E402
+from rdagent.scenarios.crypto.qlib.conf import CRYPTO_QLIB_SETTINGS  # noqa: E402
+
+MODES = ("prompt", "hypothesis", "factor")
 
 # Recorded (system prompt, user prompt, raw response) for every LLM call.
 LLM_CALLS: list[dict[str, Any]] = []
+
+# False in `prompt` mode: the call is recorded and then stopped before it reaches the model.
+CALL_LLM = True
+
+
+class PromptOnly(BaseException):
+    """Stops a stage once its prompt is recorded.
+
+    A ``BaseException``, so the ``wait_retry`` around the converter does not retry it as a failed call.
+    """
 
 _ORIGINAL_CHAT_COMPLETION = BaseAPIBackend.build_messages_and_create_chat_completion
 
@@ -80,8 +108,11 @@ def _recording_chat_completion(
         "error": None,
         "json_mode": bool(kwargs.get("json_mode")),
         "seconds": 0.0,
+        "sent": CALL_LLM,
     }
     LLM_CALLS.append(record)
+    if not CALL_LLM:
+        raise PromptOnly
 
     start = time.time()
     try:
@@ -154,11 +185,14 @@ def _print_llm_calls(stage: str, calls: list[dict[str, Any]]) -> None:
         _sub(f"{stage}: no LLM call recorded")
         return
     for index, call in enumerate(calls, 1):
-        _sub(f"{stage} | LLM call {index}/{len(calls)} (json_mode={call['json_mode']}, {call['seconds']:.1f}s)")
+        timing = f"{call['seconds']:.1f}s" if call["sent"] else "not sent"
+        _sub(f"{stage} | LLM call {index}/{len(calls)} (json_mode={call['json_mode']}, {timing})")
         _sub(f"{stage} | system prompt")
         print(call["system"])
         _sub(f"{stage} | user prompt")
         print(call["user"])
+        if not call["sent"]:
+            continue
         _sub(f"{stage} | raw response")
         print(call["response"] if call["response"] is not None else f"<no response: {call['error']}>")
     _print_json_probe(stage, calls)
@@ -191,58 +225,86 @@ def _print_experiment(experiment: Any) -> None:
         print(f"    variables   : {task.variables}")
 
 
-def main() -> int:
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    data_root = Path(CryptoSettings().data_root_dir)
+PLACEHOLDER_HYPOTHESIS = Hypothesis(
+    hypothesis="<the hypothesis the model proposes in the hypothesis stage>",
+    reason="<its reason>",
+    concise_reason="",
+    concise_observation="",
+    concise_justification="",
+    concise_knowledge="",
+)
+"""Stands in for the proposed hypothesis when the model is not called, so the second prompt can render."""
 
+
+def _run_stage(stage: str, step: Any) -> Any:
+    """Run one loop step, then print the prompts it sent even if it raised; None if it stopped at the prompt."""
+    LLM_CALLS.clear()
+    try:
+        return step()
+    except PromptOnly:
+        return None
+    finally:
+        _print_llm_calls(stage, list(LLM_CALLS))
+
+
+def main(argv: list[str] | None = None) -> int:
+    global CALL_LLM
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default="prompt",
+        help="prompt: print the prompts only; hypothesis: also call the model for a hypothesis; "
+        "factor: also turn the hypothesis into factors (default: prompt)",
+    )
+    mode = parser.parse_args(argv).mode
+    CALL_LLM = mode != "prompt"
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    print(f"MODE            = {mode}")
     print(f"CHAT_MODEL      = {LLM_SETTINGS.chat_model}")
     print(f"OPENAI_API_BASE = {LLM_SETTINGS.openai_api_base}")
-    print(f"SCENARIO        = {CRYPTO_PROP_SETTING.scen} (fixed: crypto perpetual futures)")
-    print(f"DATA_ROOT       = {data_root}")
-    print(f"with runtime env= {CRYPTO_PROP_SETTING.with_runtime_environment}")
-    if not api_key:
-        print(
-            "ERROR: OPENAI_API_KEY is empty. Export ARK_API_KEY in the shell "
-            "that launches this script; .env maps ARK_API_KEY to OPENAI_API_KEY.",
-            file=sys.stderr,
-        )
-        return 1
-    print(f"OPENAI_API_KEY  = ***{api_key[-4:]} (len={len(api_key)})")
+    print(f"QLIB DATA       = {CRYPTO_QLIB_SETTINGS.provider_uri} (market {CRYPTO_QLIB_SETTINGS.market})")
+    if CALL_LLM:
+        if not api_key:
+            print(
+                "ERROR: OPENAI_API_KEY is empty. Export ARK_API_KEY in the shell "
+                "that launches this script; .env maps ARK_API_KEY to OPENAI_API_KEY.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"OPENAI_API_KEY  = ***{api_key[-4:]} (len={len(api_key)})")
 
-    loop = CryptoFactorRDLoop(CRYPTO_PROP_SETTING)
-    # What the prompt actually got, rather than what the settings say: the scenario drops a dataset
-    # whose rows are not on disk, so a configured root can still render an empty section.
-    source_data = loop.scen.get_source_data_desc()
-    if NO_DATA_SCHEMA in source_data:
-        print(f"DATA_SCHEMAS    = none; the prompt says no data schema is available (data root: {data_root})")
-    else:
-        print(f"DATA_SCHEMAS    = {source_data.count('### ')} dataset(s), {len(source_data)} chars of prompt")
+    setting = CryptoQlibFactorPropSetting()
+    print(f"SCENARIO        = {setting.scen}")
+    loop = CryptoQlibFactorRDLoop(setting)
 
     # ---------------------------------------------------------------- stage 1
-    _header("Stage 1/2: hypothesis  (CryptoFactorHypothesisGen.gen)")
-    LLM_CALLS.clear()
-    try:
-        hypothesis = loop.propose({})
-    finally:
-        # Print the prompts even if the request above raised.
-        stage_1_calls = list(LLM_CALLS)
-        _print_llm_calls("hypothesis", stage_1_calls)
-    _print_hypothesis(hypothesis)
+    _header(f"Stage 1/{1 if mode == 'hypothesis' else 2}: hypothesis  (CryptoFactorHypothesisGen.gen)")
+    hypothesis = _run_stage("hypothesis", loop._propose)
+    stage_1_calls = len(LLM_CALLS)
+    if hypothesis is not None:
+        _print_hypothesis(hypothesis)
+    if mode == "hypothesis":
+        _header("summary")
+        print(f"stage 1 LLM calls: {stage_1_calls}")
+        return 0
 
     # ---------------------------------------------------------------- stage 2
-    _header("Stage 2/2: hypothesis2experiment  (CryptoFactorHypothesis2Experiment.convert)")
-    LLM_CALLS.clear()
-    try:
-        experiment = loop.exp_gen({"propose": hypothesis})
-    finally:
-        stage_2_calls = list(LLM_CALLS)
-        _print_llm_calls("hypothesis2experiment", stage_2_calls)
-    _print_experiment(experiment)
+    _header("Stage 2/2: hypothesis2experiment  (CryptoQlibFactorHypothesis2Experiment.convert)")
+    if hypothesis is None:
+        print("The model was not called, so the prompt below is rendered for a placeholder hypothesis.")
+        hypothesis = PLACEHOLDER_HYPOTHESIS
+    experiment = _run_stage("hypothesis2experiment", lambda: loop._exp_gen(hypothesis))
+    if experiment is not None:
+        _print_experiment(experiment)
 
     _header("summary")
-    print(f"stage 1 LLM calls: {len(stage_1_calls)}")
-    print(f"stage 2 LLM calls: {len(stage_2_calls)}")
-    print(f"generated tasks  : {len(experiment.sub_tasks)}")
+    print(f"stage 1 LLM calls: {stage_1_calls}")
+    print(f"stage 2 LLM calls: {len(LLM_CALLS)}")
+    if experiment is not None:
+        print(f"generated tasks  : {len(experiment.sub_tasks)}")
     return 0
 
 

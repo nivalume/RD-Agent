@@ -354,6 +354,28 @@ class Env(Generic[ASpecificEnvConf]):
                 time.sleep(self.conf.retry_wait_seconds)
         raise RuntimeError  # for passing CI
 
+    def _timeout_exe(self, env: Mapping) -> str | None:
+        """The executable that enforces ``running_timeout_period``, or None when there is none.
+
+        Docker images ship GNU coreutils, so ``timeout`` is always there. A local environment may
+        not have it: macOS has no ``timeout`` at all, and there coreutils installed with Homebrew
+        are named ``gtimeout`` unless the unprefixed names were linked. Look for either on the
+        PATH the entry will actually run with, which is not necessarily this process's own PATH.
+        """
+        if isinstance(self.conf, DockerConf):
+            return "timeout"
+        search_path = os.environ.get("PATH", "")
+        if isinstance(self.conf, LocalConf):
+            parts = [p for p in (self.conf.bin_path or "").split(":") if p]
+            parts += ["/bin/", "/usr/bin/"]
+            parts += [p for p in (env.get("PATH") or os.environ.get("PATH", "")).split(":") if p]
+            search_path = ":".join(parts)
+        for name in ("timeout", "gtimeout"):
+            found = shutil.which(name, path=search_path)
+            if found is not None:
+                return found
+        return None
+
     def run(
         self,
         entry: str | None = None,
@@ -426,7 +448,16 @@ class Env(Generic[ASpecificEnvConf]):
         if self.conf.running_timeout_period is None:
             timeout_cmd = entry
         else:
-            timeout_cmd = f"timeout --kill-after=10 {self.conf.running_timeout_period} {entry}"
+            timeout_exe = self._timeout_exe(env)
+            if timeout_exe is None:
+                logger.warning(
+                    f"No `timeout` (GNU coreutils) found on PATH, so the {self.conf.running_timeout_period}s "
+                    f"limit is not enforced on `{entry}`. Install coreutils (e.g. `brew install coreutils`) "
+                    "to get one.",
+                )
+                timeout_cmd = entry
+            else:
+                timeout_cmd = f"{timeout_exe} --kill-after=10 {self.conf.running_timeout_period} {entry}"
         entry_add_timeout = (
             f"/bin/sh -c '"  # start of the sh command
             + f"{timeout_cmd}; entry_exit_code=$?; "
@@ -629,6 +660,14 @@ class LocalEnv(Env[ASpecificLocalConf]):
         assert local_path is not None, "local_path should not be None"
         volumes = normalize_volumes(volumes, local_path)
 
+        if isinstance(self.conf, CondaConf) and not self.conf.bin_path:
+            logger.warning(
+                f"The PATH of the conda environment {self.conf.conda_env_name!r} could not be read "
+                f"(`conda run -n {self.conf.conda_env_name} --no-capture-output env` failed), so the "
+                "entry runs with the inherited PATH instead. Run `conda env list` and check that the "
+                "`conda` on PATH knows the environment (see `envs_dirs` in ~/.condarc).",
+            )
+
         @contextlib.contextmanager
         def _symlink_ctx(vol_map: Mapping[str, str]) -> Generator[None, None, None]:
             created_links: list[Path] = []
@@ -660,12 +699,11 @@ class LocalEnv(Env[ASpecificLocalConf]):
             if "CUDA_VISIBLE_DEVICES" in os.environ and "CUDA_VISIBLE_DEVICES" not in env:
                 env["CUDA_VISIBLE_DEVICES"] = os.environ["CUDA_VISIBLE_DEVICES"]
 
-            path = [
-                *self.conf.bin_path.split(":"),
-                "/bin/",
-                "/usr/bin/",
-                *env.get("PATH", "").split(":"),
-            ]
+            path = [p for p in (self.conf.bin_path or "").split(":") if p]
+            path += ["/bin/", "/usr/bin/"]
+            # Fall back to the inherited PATH when neither the conf nor the caller names one: a PATH
+            # of /bin and /usr/bin alone finds almost nothing (no python, no timeout, no conda).
+            path += [p for p in (env.get("PATH") or os.environ.get("PATH", "")).split(":") if p]
             env["PATH"] = ":".join(path)
 
             if entry is None:

@@ -15,19 +15,12 @@ class QlibFBWorkspace(FBWorkspace):
         super().__init__(*args, **kwargs)
         self.inject_code_from_folder(template_folder_path)
 
-    def qlib_env(self):
-        """The environment that runs qlib: docker or conda, by `MODEL_COSTEER_SETTINGS.env_type`;
-        None for another value. A scenario with data of its own overrides it, so that preparing
-        the environment does not download the default CN data."""
-        if MODEL_COSTEER_SETTINGS.env_type == "docker":
-            return QTDockerEnv()
-        if MODEL_COSTEER_SETTINGS.env_type == "conda":
-            return QlibCondaEnv(conf=QlibCondaConf())
-        return None
-
     def execute(self, qlib_config_name: str = "conf.yaml", run_env: dict = {}, *args, **kwargs) -> str:
-        qtde = self.qlib_env()
-        if qtde is None:
+        if MODEL_COSTEER_SETTINGS.env_type == "docker":
+            qtde = QTDockerEnv()
+        elif MODEL_COSTEER_SETTINGS.env_type == "conda":
+            qtde = QlibCondaEnv(conf=QlibCondaConf())
+        else:
             logger.error(f"Unknown env_type: {MODEL_COSTEER_SETTINGS.env_type}")
             return None, "Unknown environment type"
         qtde.prepare()
